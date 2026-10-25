@@ -1,134 +1,148 @@
 # MCP Bridge
 
-Delegate work to another AI agent without leaving the one you are already in.
+Delegate work to another AI agent from inside the one you are already in.
 
-Connect it once and forget it. Then, while coding in Claude Code:
+```bash
+claude mcp add mcpbridge -- npx -y mcpbridge
+```
 
-> ask gemini through mcp-bridge to review the caching layer in this module
+That is the whole setup. Now, while you are coding in Claude Code:
 
-Claude calls `ask_agent`, the bridge runs Gemini's CLI, and the answer comes straight
-back into your conversation. **One call, work done.** There is no inbox to check, no
-conversation to keep, and nothing to nudge.
+> ask gemini through mcpbridge to review the caching layer in this module
+
+Claude calls `ask_agent`, the bridge runs Gemini, and the answer comes back into your
+conversation. **One call, work done.** No mailbox to check, nothing to nudge.
 
 ## No API keys
 
-The bridge never calls a model API. It runs the agent CLIs already installed and signed
-in on your machine, so each one uses **its own existing subscription**. Nothing here
-needs an Anthropic, OpenAI, Google or xAI key, and nothing is billed per token.
+The bridge never calls a model API. It drives the agent CLIs already installed and signed
+in on your machine, so each one uses **its own existing subscription** — and it can talk to
+a model running locally in Ollama, which needs no account at all.
 
 ```
-                                     ┌──→ claude -p "..."     (your Claude subscription)
-Claude Code ──MCP──→  MCP BRIDGE  ───┼──→ codex exec "..."    (your Codex subscription)
-                       (this app)    └──→ gemini -p "..."     (your Gemini subscription)
+                                  ┌──→ claude -p "…"      your Claude subscription
+Claude Code ──MCP──→  mcpbridge ──┼──→ codex exec "…"     your Codex subscription
+Cursor      ──MCP──→              ├──→ gemini -p "…"      your Gemini subscription
+                                  └──→ Ollama (localhost) no account, no network
 ```
 
-It speaks **streamable HTTP**, not stdio, so it is one long-running process you register
-once rather than a fresh copy spawned per client.
+It removes the key, not the quota: your subscription limits still apply.
 
-## Run it
-
-```bash
-./mvnw spring-boot:run
-```
-
-Listens on `http://127.0.0.1:8080/mcp` — **loopback only, and never hosted**. It runs the
-CLIs that are signed in on this machine and reads this machine's files, so a copy on a
-server would have neither. Register it with Claude Code once:
-
-```bash
-claude mcp add --transport http mcp-bridge http://localhost:8080/mcp
-```
-
-That is the whole setup. Ask for `list_agents` first — it tells you which CLIs were
-actually found on your `PATH`.
-
-## The two tools
+## Tools
 
 | Tool | What it does |
 |---|---|
-| `list_agents` | who can be delegated to, and whether their CLI is installed |
-| `ask_agent` | hand one of them a task, wait, get the answer |
+| `list_agents` | who can be delegated to, and whether each is usable right now |
+| `ask_agent` | hand one a task, wait, get the answer |
+| `start_task` | same, but returns an id immediately for work that outlasts the request |
+| `get_task` | check on a started task |
 
-`ask_agent` takes `agent`, `prompt` and an optional `workingDirectory`. Pass the working
-directory whenever the task is about code: the other agent starts fresh, knows nothing of
-your conversation, and cannot see your files unless you point it at them.
+`ask_agent` is the normal path. The agent you delegate to starts fresh: it cannot see your
+conversation or your files, so write a self-contained prompt and pass `workingDirectory`
+whenever the task is about code.
 
-## Configuring agents
+## Check what you have
 
-Agents live in `application.yml`. The shipped entries are starting points — **verify the
-flags against the CLI versions you have**, since each tool's headless invocation differs
-and changes between releases.
-
-```yaml
-mcp-bridge:
-  max-output-chars: 60000
-  agents:
-    gemini:
-      description: "Google Gemini CLI - large context, good for whole-repo questions"
-      command: ["gemini", "-p", "{prompt}"]
-      timeout: 5m
+```bash
+npx mcpbridge --agents
 ```
 
-Adding an agent is one block. Nothing in the code knows the difference between Gemini and
-anything else you put here.
+```
+✓ claude     claude found on PATH
+✗ codex      codex is not on PATH — install it or fix the command
+✗ gemini     gemini is not on PATH — install it or fix the command
+✓ ollama     Ollama at http://127.0.0.1:11434, using qwen3:latest
+```
+
+Nothing to configure to get here — the four agents above are built in, and anything not
+installed is simply reported, never silently broken.
+
+## Adding or fixing an agent
+
+Write `~/.config/mcpbridge/config.json` (or point `MCPBRIDGE_CONFIG` elsewhere). Entries
+replace the built-in one of the same name outright.
+
+```json
+{
+  "agents": {
+    "gemini": {
+      "command": ["gemini", "--prompt", "{prompt}"],
+      "timeoutMs": 300000
+    },
+    "local": {
+      "type": "ollama",
+      "model": "qwen3:latest",
+      "description": "Local model for anything that should not leave this machine"
+    }
+  }
+}
+```
+
+Each tool's non-interactive flags change between releases, so if a built-in default does
+not match your version, override it here — `--agents` will confirm.
 
 ## Why the command lives in configuration
 
-This application runs programs. If a tool call could choose the command, a prompt
+This program runs other programs. If a tool call could choose the command, a prompt
 injected into the calling model would be remote code execution.
 
-So the command comes **only** from configuration. A tool call names an agent, and that
-name is looked up in the configured allowlist; it can never supply a command of its own.
-The prompt fills a `{prompt}` placeholder and reaches `ProcessBuilder` as a single argv
-element, so **no shell is ever involved** and a prompt full of `;` and backticks arrives
-as text. There is a test that asserts exactly this.
+So commands come **only** from configuration. A call names an agent, that name is looked up
+in the configured set, and the prompt fills a `{prompt}` placeholder that reaches `spawn`
+as a single argument with **no shell involved**. A prompt full of `;` and backticks arrives
+as text; there is a test that asserts exactly that, and that nothing in it executes.
 
-## It is a local daemon, not a service
+## stdio or HTTP
 
-Reaching this server is equivalent to running the commands in its allowlist, so it binds
-`127.0.0.1` and nothing else. Spring Boot's default of `0.0.0.0` would let anyone on the
-same network execute them here; there is a test that fails if the binding changes.
+stdio is the default and what you want: the client starts the bridge itself, so there is no
+port, no daemon and no listening socket at all.
 
-Being local is the point rather than a limitation: no hosting, no deploy, no public
-surface, no network latency, and nothing in a prompt or a reply leaves the machine.
+For one shared instance instead:
+
+```bash
+npx mcpbridge --http 8808        # http://127.0.0.1:8808/mcp
+```
+
+That mode binds loopback only, and rejects requests whose `Host` header is not
+`127.0.0.1`/`localhost` — otherwise a web page you visit could make your browser POST to
+the port and run `ask_agent` on your machine. Loopback binding alone does not stop that.
 
 ## What it will not do
 
-- **Long tasks hit the timeout.** A delegated agent is a real model doing real work, and
-  the call is synchronous. Split a large job into steps rather than sending one
-  open-ended request. Per-agent `timeout` is configurable.
-- **Each call is a fresh context.** The delegated agent remembers nothing between calls,
-  so every prompt must stand on its own.
-- **Your subscription limits still apply** — the bridge removes the key, not the quota.
+- **Long tasks hit a timeout.** `ask_agent` is synchronous and the client has its own
+  request deadline. Split big jobs, or use `start_task` and poll `get_task`.
+- **Each call starts fresh.** The delegated agent remembers nothing between calls.
+- **It is local only.** It drives CLIs signed in on this machine and reads this machine's
+  files, so there is nothing to host and nothing to deploy.
 
-## Stack
+## Development
+
+```bash
+npm install
+npm test          # typecheck + 30 tests
+npm run build
+npm start         # stdio, from source
+```
 
 | | |
 |---|---|
-| Java | 21 |
-| Spring Boot | 4.1.2 |
-| Spring AI | 2.0.2 (`spring-ai-starter-mcp-server-webmvc`) |
-| Build | Maven (wrapper included) |
-
-```bash
-./mvnw test      # 22 tests
-./mvnw clean package
-```
-
-Always `clean` before packaging — a resource you deleted can otherwise linger in
-`target/classes` and ship inside the jar.
-
-## Layout
+| Runtime | Node 20+ |
+| SDK | `@modelcontextprotocol/sdk` 1.32.2 |
+| Package size | ~16 KB |
 
 ```
-agent/   AgentDefinition (the allowlist entry), AgentRegistry (name -> definition,
-         and is it installed), AgentRunner (runs it), AgentResult
-mcp/     AgentTools - the two @Tool methods, and the provider that publishes them
+src/agents/   cli.ts (spawns a command), ollama.ts (local model), registry.ts, types.ts
+src/config.ts built-in defaults and the config file
+src/tasks.ts  background tasks behind start_task / get_task
+src/server.ts the four tools
+src/index.ts  entry point and transport choice
 ```
+
+A Java and Spring Boot implementation came first and is kept at the
+`java-implementation` tag; it was ported here so the tool installs with one `npx` command
+and no JRE.
 
 ## Roadmap
 
-- [x] one-call delegation, allowlisted commands, install reporting, output caps
-- [ ] async delegation (`start_task` / `get_result`) for jobs past the timeout
+- [x] one-call delegation, Ollama agent, async tasks, allowlisted commands
 - [ ] follow-up calls that reuse an agent's session instead of starting fresh
-- [ ] a local-model agent (Ollama) for work that should not leave the machine
+- [ ] streaming progress while a long delegation runs

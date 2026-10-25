@@ -1,0 +1,29 @@
+{
+  "name": "mcpbridge",
+  "version": "0.1.0",
+  "description": "Delegate work to another AI agent from inside the one you are already in, over MCP, with no API keys",
+  "keywords": ["mcp", "model-context-protocol", "ai", "agent", "claude", "gemini", "codex", "ollama", "delegation"],
+  "license": "MIT",
+  "author": "Syed Zeeshan Ali",
+  "repository": { "type": "git", "url": "git+https://github.com/szeeshan896/mcp-bridge.git" },
+  "homepage": "https://github.com/szeeshan896/mcp-bridge#readme",
+  "type": "module",
+  "bin": { "mcpbridge": "dist/index.js" },
+  "files": ["dist", "README.md", "LICENSE"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "test": "tsc --noEmit && node --test --import tsx test/*.test.ts",
+    "start": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.5",
+    "tsx": "4.21.0",
+    "typescript": "5.9.3"
+  }
+}
