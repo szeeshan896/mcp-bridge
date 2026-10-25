@@ -13,7 +13,7 @@
   "engines": { "node": ">=20" },
   "scripts": {
     "build": "tsc",
-    "prepublishOnly": "npm run build",
+    "prepare": "npm run build",
     "test": "tsc --noEmit && node --test --import tsx test/*.test.ts",
     "start": "tsx src/index.ts"
   },
