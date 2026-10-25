@@ -137,9 +137,9 @@ src/server.ts the four tools
 src/index.ts  entry point and transport choice
 ```
 
-A Java and Spring Boot implementation came first and is kept at the
-`java-implementation` tag; it was ported here so the tool installs with one `npx` command
-and no JRE.
+A Java and Spring Boot implementation came first and is preserved in this repository's
+history at commit `498634f`; it was ported here so the tool installs with one `npx`
+command and no JRE.
 
 ## Roadmap
 
