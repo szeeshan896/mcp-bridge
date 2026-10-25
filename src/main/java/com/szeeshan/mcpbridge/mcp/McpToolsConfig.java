@@ -5,12 +5,12 @@ import org.springframework.ai.tool.method.MethodToolCallbackProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-/** Publishes {@link BusTools} to the MCP server so connected clients can call them. */
+/** Publishes {@link AgentTools} to the MCP server so connected clients can call them. */
 @Configuration
 public class McpToolsConfig {
 
     @Bean
-    ToolCallbackProvider busToolCallbacks(BusTools busTools) {
-        return MethodToolCallbackProvider.builder().toolObjects(busTools).build();
+    ToolCallbackProvider agentToolCallbacks(AgentTools agentTools) {
+        return MethodToolCallbackProvider.builder().toolObjects(agentTools).build();
     }
 }

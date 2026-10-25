@@ -6,26 +6,45 @@ spring:
     mcp:
       server:
         name: mcp-bridge
-        version: 0.0.1
-        # streamable HTTP, not stdio: one shared process that every client
-        # connects to, so all agents see the same bus
+        version: 0.1.0
+        # streamable HTTP, not stdio: one long-running process you connect once and
+        # forget, rather than a fresh copy spawned per client
         protocol: streamable
-        # wait_for_reply blocks; the 20s default would cut it off
-        request-timeout: 120s
+        # a delegated task runs a real model; the 20s default would cut it off
+        request-timeout: 600s
         capabilities:
           tool: true
           resource: false
           prompt: false
           completion: false
         instructions: |
-          MCP Bridge is a shared message bus that lets AI agents talk to each other.
-          Call register_agent once with your own short name, then send_message to ask
-          another agent something, inbox to collect messages sent to you, and reply to
-          answer them. Pass your own name as "me" on every call.
+          MCP Bridge delegates work to other AI agents installed on this machine.
+          Call list_agents to see who is available and installed, then ask_agent to hand
+          one of them a task and get its answer back in a single call. Write prompts that
+          stand on their own: the other agent cannot see this conversation, and needs
+          workingDirectory to see project files.
 
 server:
   port: 8080
 
 mcp-bridge:
-  max-wait-seconds: 90
-  history-limit: 200
+  # Output longer than this is truncated so one verbose agent cannot flood the
+  # calling model's context.
+  max-output-chars: 60000
+
+  # Every command here is an allowlist entry. A tool call picks an agent by name; it can
+  # never supply a command of its own. Verify these flags against the versions you have
+  # installed -- list_agents reports which executables were actually found on PATH.
+  agents:
+    claude:
+      description: "Claude Code - strong at refactoring, tests and reading large codebases"
+      command: ["claude", "-p", "{prompt}"]
+      timeout: 5m
+    codex:
+      description: "OpenAI Codex CLI - strong at algorithms and single-file problems"
+      command: ["codex", "exec", "{prompt}"]
+      timeout: 5m
+    gemini:
+      description: "Google Gemini CLI - large context, good for whole-repo questions"
+      command: ["gemini", "-p", "{prompt}"]
+      timeout: 5m

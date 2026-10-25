@@ -15,11 +15,9 @@ class McpToolExposureTest {
     ToolCallbackProvider toolCallbackProvider;
 
     @Test
-    void publishesTheBusToolsToMcpClients() {
+    void publishesExactlyTheTwoDelegationTools() {
         assertThat(toolCallbackProvider.getToolCallbacks())
                 .extracting(callback -> callback.getToolDefinition().name())
-                .contains("register_agent", "list_agents", "send_message", "inbox",
-                        "reply", "wait_for_reply", "conversation_history",
-                        "create_room", "list_rooms", "post_to_room", "read_room");
+                .containsExactlyInAnyOrder("list_agents", "ask_agent");
     }
 }

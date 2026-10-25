@@ -1,30 +1,29 @@
 # MCP Bridge
 
-A shared message bus that lets AI coding agents talk to each other — so you can stay
-in one tool and still get work out of the others.
+Delegate work to another AI agent without leaving the one you are already in.
 
-Say you are in Claude Code and want a second opinion from Codex. Instead of switching
-windows, copying context and pasting an answer back, you say *"ask codex which index is
-missing"*. Claude calls `send_message`, Codex picks it up from its `inbox`, replies, and
-the answer lands back in your Claude conversation.
+Connect it once and forget it. Then, while coding in Claude Code:
+
+> ask gemini through mcp-bridge to review the caching layer in this module
+
+Claude calls `ask_agent`, the bridge runs Gemini's CLI, and the answer comes straight
+back into your conversation. **One call, work done.** There is no inbox to check, no
+conversation to keep, and nothing to nudge.
 
 ## No API keys
 
-MCP Bridge never calls a model. It only passes messages between agents that are already
-connected to it, so **every agent uses its own existing session** — nothing here needs an
-Anthropic, OpenAI, xAI or DeepSeek key, and nothing is billed per token.
+The bridge never calls a model API. It runs the agent CLIs already installed and signed
+in on your machine, so each one uses **its own existing subscription**. Nothing here
+needs an Anthropic, OpenAI, Google or xAI key, and nothing is billed per token.
 
 ```
-Claude Code ──MCP──┐                        ┌──MCP── Codex CLI
-                   │                        │
-Cursor      ──MCP──┼──→  MCP BRIDGE  ←──────┼──MCP── any MCP client
-                   │      (this app)        │
-Claude Desktop ────┘                        └──MCP── whatever comes next
+                                     ┌──→ claude -p "..."     (your Claude subscription)
+Claude Code ──MCP──→  MCP BRIDGE  ───┼──→ codex exec "..."    (your Codex subscription)
+                       (this app)    └──→ gemini -p "..."     (your Gemini subscription)
 ```
 
-The bridge speaks **streamable HTTP**, not stdio, and that is deliberate: a stdio server
-is spawned once per client, so each client would get its own private copy and the bus
-would never be shared. One HTTP process means one bus that everybody sees.
+It speaks **streamable HTTP**, not stdio, so it is one long-running process you register
+once rather than a fresh copy spawned per client.
 
 ## Run it
 
@@ -32,50 +31,64 @@ would never be shared. One HTTP process means one bus that everybody sees.
 ./mvnw spring-boot:run
 ```
 
-It listens on `http://localhost:8080/mcp`.
-
-## Connect your agents
-
-Claude Code:
+Listens on `http://localhost:8080/mcp`. Register it with Claude Code once:
 
 ```bash
 claude mcp add --transport http mcp-bridge http://localhost:8080/mcp
 ```
 
-Any other MCP client: point it at `http://localhost:8080/mcp` as a streamable-HTTP server.
+That is the whole setup. Ask for `list_agents` first — it tells you which CLIs were
+actually found on your `PATH`.
 
-Then, in each agent, once per session:
-
-> register yourself on mcp-bridge as "codex"
-
-## Tools
+## The two tools
 
 | Tool | What it does |
 |---|---|
-| `register_agent` | announce yourself so others can address you |
-| `list_agents` | who is on the bus, and when they were last active |
-| `send_message` | ask another agent a question or hand it a task |
-| `inbox` | collect messages sent to you, and mark them read |
-| `reply` | answer a message you received |
-| `wait_for_reply` | block briefly for an answer to something you sent |
-| `conversation_history` | the thread between you and another agent |
-| `create_room` / `list_rooms` | a named room for a group discussion |
-| `post_to_room` / `read_room` | post to and read a room |
+| `list_agents` | who can be delegated to, and whether their CLI is installed |
+| `ask_agent` | hand one of them a task, wait, get the answer |
 
-Every tool takes your own name as `me`, because MCP does not hand the server a reliable
-caller identity.
+`ask_agent` takes `agent`, `prompt` and an optional `workingDirectory`. Pass the working
+directory whenever the task is about code: the other agent starts fresh, knows nothing of
+your conversation, and cannot see your files unless you point it at them.
+
+## Configuring agents
+
+Agents live in `application.yml`. The shipped entries are starting points — **verify the
+flags against the CLI versions you have**, since each tool's headless invocation differs
+and changes between releases.
+
+```yaml
+mcp-bridge:
+  max-output-chars: 60000
+  agents:
+    gemini:
+      description: "Google Gemini CLI - large context, good for whole-repo questions"
+      command: ["gemini", "-p", "{prompt}"]
+      timeout: 5m
+```
+
+Adding an agent is one block. Nothing in the code knows the difference between Gemini and
+anything else you put here.
+
+## Why the command lives in configuration
+
+This application runs programs. If a tool call could choose the command, a prompt
+injected into the calling model would be remote code execution.
+
+So the command comes **only** from configuration. A tool call names an agent, and that
+name is looked up in the configured allowlist; it can never supply a command of its own.
+The prompt fills a `{prompt}` placeholder and reaches `ProcessBuilder` as a single argv
+element, so **no shell is ever involved** and a prompt full of `;` and backticks arrives
+as text. There is a test that asserts exactly this.
 
 ## What it will not do
 
-**The bridge cannot wake a sleeping agent.** It has no way to push into an idle
-conversation, so the other agent has to be running and has to check its `inbox`. In
-practice you either keep that session open, or tell it "check your inbox" when you want
-it to join. Messages are never dropped — they wait.
-
-`send_message` returns a `note` saying whether anyone by that name has actually connected,
-so a typo surfaces immediately instead of vanishing into a black hole.
-
-**State is in memory.** Restarting the app clears agents, messages and rooms.
+- **Long tasks hit the timeout.** A delegated agent is a real model doing real work, and
+  the call is synchronous. Split a large job into steps rather than sending one
+  open-ended request. Per-agent `timeout` is configurable.
+- **Each call is a fresh context.** The delegated agent remembers nothing between calls,
+  so every prompt must stand on its own.
+- **Your subscription limits still apply** — the bridge removes the key, not the quota.
 
 ## Stack
 
@@ -87,7 +100,7 @@ so a typo surfaces immediately instead of vanishing into a black hole.
 | Build | Maven (wrapper included) |
 
 ```bash
-./mvnw test      # 29 tests
+./mvnw test      # 22 tests
 ./mvnw clean package
 ```
 
@@ -97,16 +110,14 @@ Always `clean` before packaging — a resource you deleted can otherwise linger 
 ## Layout
 
 ```
-bus/   MessageBus — agents, messages, rooms; the single source of truth
-mcp/   BusTools — the @Tool methods clients see, and the provider that publishes them
+agent/   AgentDefinition (the allowlist entry), AgentRegistry (name -> definition,
+         and is it installed), AgentRunner (runs it), AgentResult
+mcp/     AgentTools - the two @Tool methods, and the provider that publishes them
 ```
-
-Swapping the in-memory maps in `MessageBus` for a database touches nothing else.
 
 ## Roadmap
 
-- [x] direct messages, rooms, reply/wait, unknown-recipient warning
-- [ ] persistence, so the bus survives a restart
-- [ ] a local-model agent (Ollama) that is always awake and answers without a nudge
-- [ ] MCP `sampling`, if clients support it — would let the bridge drive an agent directly
-- [ ] a web view of live conversations
+- [x] one-call delegation, allowlisted commands, install reporting, output caps
+- [ ] async delegation (`start_task` / `get_result`) for jobs past the timeout
+- [ ] follow-up calls that reuse an agent's session instead of starting fresh
+- [ ] a local-model agent (Ollama) for work that should not leave the machine
