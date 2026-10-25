@@ -31,7 +31,9 @@ once rather than a fresh copy spawned per client.
 ./mvnw spring-boot:run
 ```
 
-Listens on `http://localhost:8080/mcp`. Register it with Claude Code once:
+Listens on `http://127.0.0.1:8080/mcp` — **loopback only, and never hosted**. It runs the
+CLIs that are signed in on this machine and reads this machine's files, so a copy on a
+server would have neither. Register it with Claude Code once:
 
 ```bash
 claude mcp add --transport http mcp-bridge http://localhost:8080/mcp
@@ -80,6 +82,15 @@ name is looked up in the configured allowlist; it can never supply a command of 
 The prompt fills a `{prompt}` placeholder and reaches `ProcessBuilder` as a single argv
 element, so **no shell is ever involved** and a prompt full of `;` and backticks arrives
 as text. There is a test that asserts exactly this.
+
+## It is a local daemon, not a service
+
+Reaching this server is equivalent to running the commands in its allowlist, so it binds
+`127.0.0.1` and nothing else. Spring Boot's default of `0.0.0.0` would let anyone on the
+same network execute them here; there is a test that fails if the binding changes.
+
+Being local is the point rather than a limitation: no hosting, no deploy, no public
+surface, no network latency, and nothing in a prompt or a reply leaves the machine.
 
 ## What it will not do
 

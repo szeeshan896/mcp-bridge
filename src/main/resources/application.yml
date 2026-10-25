@@ -26,6 +26,10 @@ spring:
 
 server:
   port: 8080
+  # Loopback only, deliberately. ask_agent runs the commands in the allowlist below, so a
+  # socket on 0.0.0.0 -- Spring Boot's default -- would let anyone on the same network
+  # execute them on this machine. This bridge is a local daemon; it is never hosted.
+  address: 127.0.0.1
 
 mcp-bridge:
   # Output longer than this is truncated so one verbose agent cannot flood the
