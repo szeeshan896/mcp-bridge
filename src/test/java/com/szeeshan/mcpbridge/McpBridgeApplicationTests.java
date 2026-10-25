@@ -1,10 +1,10 @@
-package com.szeeshan.mcpmanager;
+package com.szeeshan.mcpbridge;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 
 @SpringBootTest
-class McpManagerApplicationTests {
+class McpBridgeApplicationTests {
 
     @Test
     void contextLoads() {

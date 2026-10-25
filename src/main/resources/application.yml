@@ -1,0 +1,31 @@
+spring:
+  application:
+    name: mcp-bridge
+
+  ai:
+    mcp:
+      server:
+        name: mcp-bridge
+        version: 0.0.1
+        # streamable HTTP, not stdio: one shared process that every client
+        # connects to, so all agents see the same bus
+        protocol: streamable
+        # wait_for_reply blocks; the 20s default would cut it off
+        request-timeout: 120s
+        capabilities:
+          tool: true
+          resource: false
+          prompt: false
+          completion: false
+        instructions: |
+          MCP Bridge is a shared message bus that lets AI agents talk to each other.
+          Call register_agent once with your own short name, then send_message to ask
+          another agent something, inbox to collect messages sent to you, and reply to
+          answer them. Pass your own name as "me" on every call.
+
+server:
+  port: 8080
+
+mcp-bridge:
+  max-wait-seconds: 90
+  history-limit: 200
