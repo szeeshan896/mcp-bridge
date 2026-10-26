@@ -1,9 +1,10 @@
 import { spawn } from 'node:child_process';
-import { constants } from 'node:fs';
+import { constants, readFileSync } from 'node:fs';
 import { access } from 'node:fs/promises';
-import { delimiter, join, sep } from 'node:path';
+import { delimiter, dirname, join, sep } from 'node:path';
 
 import type { CliAgentConfig } from '../config.js';
+import { type ShimTarget, parseShimTarget } from './shim.js';
 import { type Agent, type AgentResult, type RunOptions, failed, truncate } from './types.js';
 
 export const PROMPT_PLACEHOLDER = '{prompt}';
@@ -49,25 +50,39 @@ export class CliAgent implements Agent {
     if (!resolved) {
       return { available: false, detail: `${this.requires} is not on PATH — install it or fix the command` };
     }
-    if (needsAShell(resolved)) {
-      return { available: false, detail: batchFileAdvice(this.requires, resolved) };
+    if (!needsAShell(resolved)) {
+      return { available: true, detail: `${this.requires} found at ${resolved}` };
     }
-    return { available: true, detail: `${this.requires} found at ${resolved}` };
+    const behindShim = readShim(resolved);
+    return behindShim
+      ? { available: true, detail: `${this.requires} is a shim for ${behindShim.command}` }
+      : { available: false, detail: batchFileAdvice(this.requires, resolved) };
   }
 
   async run(prompt: string, options: RunOptions): Promise<AgentResult> {
     const resolved = await resolveOnPath(this.requires);
+    let replacement: ShimTarget | null = null;
     if (resolved && needsAShell(resolved)) {
-      return failed(this.name, batchFileAdvice(this.requires, resolved));
+      replacement = readShim(resolved);
+      if (!replacement) return failed(this.name, batchFileAdvice(this.requires, resolved));
     }
-    return this.spawnAgent(prompt, options);
+    return this.spawnAgent(prompt, options, replacement);
   }
 
-  private spawnAgent(prompt: string, options: RunOptions): Promise<AgentResult> {
+  private spawnAgent(
+    prompt: string,
+    options: RunOptions,
+    replacement: ShimTarget | null,
+  ): Promise<AgentResult> {
     const viaStdin = this.promptVia === 'stdin';
-    const argv = viaStdin
+    const configured = viaStdin
       ? [...this.config.command]
       : this.config.command.map((part) => part.replaceAll(PROMPT_PLACEHOLDER, prompt));
+    // the shim's own argv[0] is replaced by what it would have run, keeping the agent's
+    // own flags after it
+    const argv = replacement
+      ? [replacement.command, ...replacement.prefix, ...configured.slice(1)]
+      : configured;
     const [command, ...args] = argv as [string, ...string[]];
     const timeoutMs = this.config.timeoutMs ?? 300_000;
     const cwd = options.cwd ?? this.config.cwd;
@@ -173,6 +188,18 @@ export function startupAdvice(
   return `could not start ${command}. Is it installed and on PATH? (${error.message})`;
 }
 
+/**
+ * Reads what a Windows shim would have run. Reading it is safe where executing it is not:
+ * nothing from the prompt reaches the file, and the program it names is spawned directly.
+ */
+function readShim(shimPath: string): ShimTarget | null {
+  try {
+    return parseShimTarget(readFileSync(shimPath, 'utf8'), dirname(shimPath), process.execPath);
+  } catch {
+    return null;
+  }
+}
+
 /** Kills the process group on POSIX, the tree via taskkill on Windows. */
 function killTree(pid: number | undefined): void {
   if (pid === undefined) return;
@@ -201,9 +228,10 @@ export function needsAShell(resolvedPath: string): boolean {
 
 function batchFileAdvice(executable: string, resolved: string): string {
   return (
-    `${executable} resolves to ${resolved}, a Windows batch shim, which can only run via a ` +
-    `shell — and passing a prompt through a shell is unsafe. Point this agent at the real ` +
-    `executable instead, e.g. "command": ["node", "C:\\\\path\\\\to\\\\${executable}\\\\cli.js", "{prompt}"].`
+    `${executable} resolves to ${resolved}, a Windows batch shim whose target could not be ` +
+    `read, and a shim can only run through a shell — which a prompt must not touch. Point ` +
+    `this agent at the real executable instead, e.g. ` +
+    `"command": ["C:\\\\path\\\\to\\\\${executable}.exe", "{prompt}"].`
   );
 }
 

@@ -213,15 +213,20 @@ mcpbridge --example-config > ~/.config/mcpbridge/config.json
 
 ## On Windows
 
-An agent whose command resolves to a `.cmd` or `.bat` shim — which is how npm-installed
-CLIs appear on Windows — is refused rather than run, because a batch file can only be
-invoked through a shell and putting a prompt through a shell is the one thing this program
-must not do. `list_agents` says so and names the fix: point the agent at the real
-executable.
+Every npm-installed CLI appears as a `.cmd` shim, which Node cannot spawn without a shell
+— and a prompt must never go through a shell. Rather than refusing every agent on the
+platform, the shim is **read** and the program it would have run is spawned directly:
 
-```json
-{ "agents": { "claude": { "command": ["node", "C:\\Users\\you\\AppData\\Roaming\\npm\\node_modules\\@anthropic-ai\\claude-code\\cli.js", "-p", "{prompt}"] } } }
 ```
+claude  ->  C:\Users\you\AppData\Roaming\npm\claude.cmd        (the shim, never run)
+        ->  ...\node_modules\@anthropic-ai\claude-code\bin\claude.exe   (run instead)
+```
+
+Reading a shim is safe where running it is not: nothing from the prompt reaches the file.
+Both shapes npm writes are handled — a native binary, and a script invoked through node,
+which is run with the same node that is running the bridge rather than whichever one is
+first on `PATH`. A shim whose target cannot be read or found falls back to being refused
+with the path to set by hand, so an unrecognised one never produces a wrong command.
 
 ## What it will not do
 
@@ -235,7 +240,7 @@ executable.
 
 ```bash
 npm install
-npm test          # typecheck + 60 tests
+npm test          # typecheck + 67 tests
 npm run build
 npm start         # stdio, from source
 ```
@@ -247,7 +252,8 @@ npm start         # stdio, from source
 | Package size | ~16 KB |
 
 ```
-src/agents/   cli.ts (spawns a command), ollama.ts (local model),
+src/agents/   cli.ts (spawns a command), shim.ts (what a Windows .cmd really runs),
+              ollama.ts (local model),
               openai.ts (any OpenAI-compatible API), broken.ts (a config that did not
               load, so one typo costs that agent and not the bridge), registry.ts
 test/fixtures/agent.mjs  a Node stand-in for an agent CLI, so the suite runs on Windows
