@@ -35,7 +35,7 @@ It removes the key, not the quota: your subscription limits still apply.
 
 | Tool | What it does |
 |---|---|
-| `list_agents` | who can be delegated to, and whether each is usable right now |
+| `list_agents` | who can be delegated to, and whether each can be started |
 | `ask_agent` | hand one a task, wait, get the answer |
 | `start_task` | same, but returns an id immediately for work that outlasts the request |
 | `get_task` | check on a started task |
@@ -145,7 +145,10 @@ npm install                 # builds dist/ via the prepare script
 node dist/index.js --agents # see which agents are usable here
 ```
 
-Check an agent really answers before wiring anything up — the built-in commands are each
+`--agents` says an agent can be *started*, not that its account works — a signed-out CLI
+or a withdrawn subscription still lists as available and fails when asked. Checking
+properly would mean spending a real call on every listing. So check an agent really
+answers before wiring anything up — the built-in commands are each
 tool's documented non-interactive mode, but those flags do change between releases:
 
 ```bash

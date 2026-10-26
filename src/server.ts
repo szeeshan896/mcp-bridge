@@ -36,11 +36,13 @@ export function createServer(
     {
       title: 'List delegable agents',
       description:
-        'List the AI agents this bridge can delegate to, and whether each one is usable right ' +
-        'now. Check this before delegating: "available": false carries the reason, such as a ' +
-        'CLI that is not installed or an Ollama that is not running. "readsFiles" says ' +
-        'whether passing workingDirectory actually lets that agent see your files — when it ' +
-        'is false, put the content in the prompt instead.',
+        'List the AI agents this bridge can delegate to. "available" means its command was ' +
+        'found and can be started — not that its account works: a signed-out CLI or a ' +
+        'withdrawn subscription still lists as available and fails when asked, reporting why ' +
+        'in "diagnostics". Check this before delegating, since "available": false carries its ' +
+        'own reason, such as a CLI that is not installed. "readsFiles" says whether passing ' +
+        'workingDirectory actually lets that agent see your files — when it is false, put the ' +
+        'content in the prompt instead.',
       inputSchema: {},
     },
     async () => json(await registry.statuses()),

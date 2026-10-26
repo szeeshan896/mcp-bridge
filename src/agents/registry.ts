@@ -9,6 +9,11 @@ export interface AgentStatus {
   name: string;
   description: string;
   requires: string;
+  /**
+   * Whether the agent can be started — its command resolves, or its endpoint has a key.
+   * Not whether its account works: checking that would mean spending a call on every
+   * listing, so a signed-out CLI lists as available and explains itself when asked.
+   */
   available: boolean;
   /** whether pointing it at a directory actually lets it read those files */
   readsFiles: boolean;
