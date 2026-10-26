@@ -218,6 +218,43 @@ call.
 mcpbridge --example-config > ~/.config/mcpbridge/config.json
 ```
 
+## When an agent will not authenticate
+
+`--ask` separates "the command is wrong" from "the account is not usable", which look the
+same from inside a client. Three real cases:
+
+**A subscription CLI whose session has lapsed** reports it plainly, e.g. `Failed to
+authenticate: OAuth session expired and could not be refreshed`. Run that tool
+interactively once to sign in again; nothing here needs changing.
+
+**A provider that has withdrawn a tier.** Gemini CLI now answers `IneligibleTierError:
+This client is no longer supported for Gemini Code Assist for individuals`, pointing at
+Antigravity. No flag works around that. Gemini models are still reachable through Google's
+OpenAI-compatible endpoint with an AI Studio key, which this bridge speaks already:
+
+```json
+{
+  "agents": {
+    "gemini-api": {
+      "type": "openai",
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "model": "<a model id>",
+      "apiKeyEnv": "GEMINI_API_KEY"
+    }
+  }
+}
+```
+
+**A CLI that refuses to run unattended in a directory it does not trust.** Gemini CLI
+wants `--skip-trust` or `GEMINI_CLI_TRUST_WORKSPACE=true`. That is deliberately not set
+for you: it switches off a check on whatever directory a caller points the agent at, which
+is a decision to make yourself rather than inherit. Opt in per agent:
+
+```json
+{ "agents": { "gemini": { "command": ["gemini", "-p", "{prompt}"],
+                          "env": { "GEMINI_CLI_TRUST_WORKSPACE": "true" } } } }
+```
+
 ## On Windows
 
 Every npm-installed CLI appears as a `.cmd` shim, which Node cannot spawn without a shell
