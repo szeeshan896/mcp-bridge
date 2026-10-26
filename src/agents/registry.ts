@@ -1,6 +1,8 @@
 import type { AgentConfig, Config } from '../config.js';
+import { BrokenAgent } from './broken.js';
 import { CliAgent } from './cli.js';
 import { OllamaAgent } from './ollama.js';
+import { OpenAiAgent } from './openai.js';
 import type { Agent } from './types.js';
 
 export interface AgentStatus {
@@ -49,8 +51,21 @@ export class AgentRegistry {
   }
 }
 
+/**
+ * A rejected config becomes a BrokenAgent rather than an exception: one typo should cost
+ * that agent, not the whole bridge and every other agent with it.
+ */
 function build(name: string, config: AgentConfig, maxOutputChars: number): Agent {
-  return config.type === 'ollama'
-    ? new OllamaAgent(name, config, maxOutputChars)
-    : new CliAgent(name, config, maxOutputChars);
+  try {
+    switch (config.type) {
+      case 'ollama':
+        return new OllamaAgent(name, config, maxOutputChars);
+      case 'openai':
+        return new OpenAiAgent(name, config, maxOutputChars);
+      default:
+        return new CliAgent(name, config, maxOutputChars);
+    }
+  } catch (error) {
+    return new BrokenAgent(name, (error as Error).message);
+  }
 }

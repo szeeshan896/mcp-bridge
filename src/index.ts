@@ -12,9 +12,10 @@ import { TaskStore } from './tasks.js';
 
 const USAGE = `mcpbridge - delegate work to another AI agent over MCP
 
-  mcpbridge                 run as an MCP server over stdio (default)
-  mcpbridge --http [port]   run as an HTTP server on 127.0.0.1 (default port 8808)
-  mcpbridge --agents        print the configured agents and whether each is usable
+  mcpbridge                  run as an MCP server over stdio (default)
+  mcpbridge --http [port]    run as an HTTP server on 127.0.0.1 (default port 8808)
+  mcpbridge --agents         print the configured agents and whether each is usable
+  mcpbridge --example-config print a starter config; JSON on stdout, notes on stderr
   mcpbridge --help
 
 Register it with a client once, e.g.
@@ -31,6 +32,11 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (argv.includes('--example-config')) {
+    printExampleConfig();
+    return;
+  }
+
   const { config, source } = loadConfig();
   const registry = new AgentRegistry(config);
   const limit = new ConcurrencyLimit(config.maxConcurrent);
@@ -42,7 +48,8 @@ async function main(): Promise<void> {
       process.stdout.write(
         `${status.available ? '✓' : '✗'} ${status.name.padEnd(10)} ${status.detail}\n`,
       );
-      if (!status.readsFiles) {
+      // only meaningful for an agent that can actually be used
+      if (status.available && !status.readsFiles) {
         process.stdout.write(`${''.padEnd(13)}cannot read files — inline context in the prompt\n`);
       }
     }
@@ -94,6 +101,50 @@ async function main(): Promise<void> {
   http.listen(port, '127.0.0.1', () => {
     console.error(`mcpbridge on http://127.0.0.1:${port}/mcp, agents from ${source}`);
   });
+}
+
+/**
+ * JSON on stdout, guidance on stderr, so `mcpbridge --example-config > config.json` writes
+ * a usable file while the person still sees what to fill in.
+ */
+function printExampleConfig(): void {
+  const example = {
+    maxConcurrent: 2,
+    maxOutputChars: 60_000,
+    agents: {
+      claude: { command: ['claude', '-p'], promptVia: 'stdin', timeoutMs: 300_000 },
+      gemini: { command: ['gemini', '-p', '{prompt}'], timeoutMs: 300_000 },
+      local: { type: 'ollama', description: 'A model running in Ollama' },
+      grok: {
+        type: 'openai',
+        description: 'Grok, via the xAI API — no CLI exists, so this is the only route',
+        baseUrl: 'https://api.x.ai/v1',
+        apiKeyEnv: 'XAI_API_KEY',
+      },
+      openrouter: {
+        type: 'openai',
+        description: 'One key, many providers',
+        baseUrl: 'https://openrouter.ai/api/v1',
+        apiKeyEnv: 'OPENROUTER_API_KEY',
+      },
+    },
+  };
+  process.stdout.write(`${JSON.stringify(example, null, 2)}\n`);
+  process.stderr.write(
+    [
+      '',
+      `Save this to ${configPath()} and edit it.`,
+      '',
+      'The CLI agents need nothing but the tool installed and signed in.',
+      'The "openai" agents need a key, exported under the name in apiKeyEnv — never put the',
+      'key in this file, which is easy to copy into a repo or an issue by accident.',
+      '',
+      'The "openai" agents have no model set, so they report unavailable until you add one.',
+      'With the key exported, `mcpbridge --agents` lists the ids that endpoint offers, where',
+      'the provider exposes a listing; otherwise take one from its documentation.',
+      '',
+    ].join('\n'),
+  );
 }
 
 main().catch((error: unknown) => {

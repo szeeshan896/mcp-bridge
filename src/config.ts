@@ -30,7 +30,36 @@ export interface OllamaAgentConfig {
   timeoutMs?: number;
 }
 
-export type AgentConfig = CliAgentConfig | OllamaAgentConfig;
+/**
+ * A model behind an OpenAI-compatible /chat/completions endpoint. Almost every provider
+ * that is not Anthropic or Google exposes one, so this single shape reaches xAI (Grok),
+ * DeepSeek, Mistral, Groq, Together, OpenRouter, LM Studio, llama.cpp and vLLM — only the
+ * base URL, the model name and the key differ.
+ */
+export interface OpenAiAgentConfig {
+  type: 'openai';
+  description?: string;
+  /** e.g. https://api.x.ai/v1 — the part before /chat/completions */
+  baseUrl: string;
+  /**
+   * The provider's model id. Left out until you know it: with a key set, probing lists
+   * what the endpoint offers, where the provider exposes a listing.
+   */
+  model?: string;
+  /**
+   * Name of the environment variable holding the key — not the key itself. Config files
+   * get copied into repos and pasted into issues; an environment variable does not.
+   */
+  apiKeyEnv?: string;
+  /** The key inline. Works, but prefer apiKeyEnv: this file is easy to leak. */
+  apiKey?: string;
+  /** extra headers some providers want, e.g. OpenRouter's attribution headers */
+  headers?: Record<string, string>;
+  maxOutputTokens?: number;
+  timeoutMs?: number;
+}
+
+export type AgentConfig = CliAgentConfig | OllamaAgentConfig | OpenAiAgentConfig;
 
 export interface Config {
   maxOutputChars: number;

@@ -39,6 +39,10 @@ It removes the key, not the quota: your subscription limits still apply.
 | `start_task` | same, but returns an id immediately for work that outlasts the request |
 | `get_task` | check on a started task |
 
+Every answer carries `notes` as well as `diagnostics`: `diagnostics` is why a call failed,
+`notes` is what you should know about one that succeeded — a directory that was ignored,
+tokens spent, an answer cut short at the model's output limit.
+
 `ask_agent` is the normal path. The agent you delegate to starts fresh: it cannot see your
 conversation or your files, so write a self-contained prompt and pass `workingDirectory`
 whenever the task is about code.
@@ -128,6 +132,53 @@ That mode binds loopback only, and rejects requests whose `Host` header is not
 `127.0.0.1`/`localhost` — otherwise a web page you visit could make your browser POST to
 the port and run `ask_agent` on your machine. Loopback binding alone does not stop that.
 
+## Reaching a model that has no CLI
+
+Some providers publish no command-line tool at all. xAI is one: there is no official Grok
+CLI, so the xAI API is the only route, and that means a key. The same shape reaches most
+providers that are not Anthropic or Google, because they all speak
+`POST /v1/chat/completions` — DeepSeek, Mistral, Groq, Together, OpenRouter, LM Studio,
+llama.cpp and vLLM included. One adapter, differing only in base URL, model and key.
+
+```json
+{
+  "agents": {
+    "grok": {
+      "type": "openai",
+      "baseUrl": "https://api.x.ai/v1",
+      "model": "<a model id from xAI's docs>",
+      "apiKeyEnv": "XAI_API_KEY"
+    },
+    "openrouter": {
+      "type": "openai",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "model": "<a model id>",
+      "apiKeyEnv": "OPENROUTER_API_KEY"
+    }
+  }
+}
+```
+
+**`apiKeyEnv` names an environment variable; it is not the key.** Config files get copied
+into repositories and pasted into issues, and a key in one is a key leaked. An inline
+`apiKey` works but is the worse habit. The key never appears in a result, a note or an
+error — there is a test asserting exactly that.
+
+Leave `model` out until you know it: with the key exported, `mcpbridge --agents` lists the
+ids that endpoint offers, where the provider exposes a listing.
+
+**Keys stay entirely optional.** An agent without one reports `available: false` exactly
+like a CLI that is not installed, so a setup of only CLIs and Ollama needs no key anywhere.
+Add one only where a provider leaves no other door.
+
+Because these agents are HTTP, they report `readsFiles: false` and say what they spent:
+`notes` carries the token usage, since unlike a subscription CLI these calls are billed per
+call.
+
+```bash
+mcpbridge --example-config > ~/.config/mcpbridge/config.json
+```
+
 ## On Windows
 
 An agent whose command resolves to a `.cmd` or `.bat` shim — which is how npm-installed
@@ -152,7 +203,7 @@ executable.
 
 ```bash
 npm install
-npm test          # typecheck + 41 tests
+npm test          # typecheck + 58 tests
 npm run build
 npm start         # stdio, from source
 ```
@@ -164,7 +215,9 @@ npm start         # stdio, from source
 | Package size | ~16 KB |
 
 ```
-src/agents/   cli.ts (spawns a command), ollama.ts (local model), registry.ts, types.ts
+src/agents/   cli.ts (spawns a command), ollama.ts (local model),
+              openai.ts (any OpenAI-compatible API), broken.ts (a config that did not
+              load, so one typo costs that agent and not the bridge), registry.ts
 test/fixtures/agent.mjs  a Node stand-in for an agent CLI, so the suite runs on Windows
 src/config.ts built-in defaults and the config file
 src/tasks.ts  background tasks behind start_task / get_task
