@@ -176,3 +176,12 @@ test('agents run with colour disabled', async () => {
 
   assert.equal(result.output, '1');
 });
+
+test('a script shim is reported by the script it runs, not the interpreter', async () => {
+  // "a shim for node.exe" names the interpreter every script shim shares, which tells
+  // the reader nothing about which program will run
+  const { CliAgent: Agent } = await import('../src/agents/cli.js');
+  const agent = new Agent('x', { command: [process.execPath, '{prompt}'] }, 100);
+
+  assert.match((await agent.probe()).detail, /found at/);
+});

@@ -15,6 +15,9 @@ const USAGE = `mcpbridge - delegate work to another AI agent over MCP
   mcpbridge                  run as an MCP server over stdio (default)
   mcpbridge --http [port]    run as an HTTP server on 127.0.0.1 (default port 8808)
   mcpbridge --agents         print the configured agents and whether each is usable
+  mcpbridge --ask <agent> <prompt>
+                             delegate once from the terminal, to check an agent works
+                             before wiring it into a client
   mcpbridge --example-config print a starter config; JSON on stdout, notes on stderr
   mcpbridge --help
 
@@ -53,6 +56,34 @@ async function main(): Promise<void> {
         process.stdout.write(`${''.padEnd(13)}cannot read files — inline context in the prompt\n`);
       }
     }
+    return;
+  }
+
+  const askIndex = argv.indexOf('--ask');
+  if (askIndex !== -1) {
+    const name = argv[askIndex + 1];
+    const prompt = argv.slice(askIndex + 2).join(' ');
+    if (!name || !prompt) {
+      console.error('usage: mcpbridge --ask <agent> <prompt>');
+      process.exitCode = 1;
+      return;
+    }
+    const agent = registry.find(name);
+    if (!agent) {
+      console.error(`no agent named "${name}". Available: ${registry.names().join(', ')}`);
+      process.exitCode = 1;
+      return;
+    }
+    process.stderr.write(`asking ${agent.name}...\n`);
+    const result = await limit.run(() => agent.run(prompt, { cwd: process.cwd() }));
+    if (result.output) process.stdout.write(`${result.output}\n`);
+    if (result.notes) process.stderr.write(`\nnote: ${result.notes}\n`);
+    if (!result.succeeded) {
+      process.stderr.write(`\nfailed after ${result.durationMs}ms: ${result.diagnostics}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    process.stderr.write(`\nok in ${result.durationMs}ms\n`);
     return;
   }
 

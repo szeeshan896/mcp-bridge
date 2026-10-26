@@ -54,9 +54,14 @@ export class CliAgent implements Agent {
       return { available: true, detail: `${this.requires} found at ${resolved}` };
     }
     const behindShim = readShim(resolved);
-    return behindShim
-      ? { available: true, detail: `${this.requires} is a shim for ${behindShim.command}` }
-      : { available: false, detail: batchFileAdvice(this.requires, resolved) };
+    if (!behindShim) {
+      return { available: false, detail: batchFileAdvice(this.requires, resolved) };
+    }
+    // name the script, not the interpreter: "a shim for node.exe" says nothing about
+    // which program is actually going to run
+    const target = behindShim.prefix[0] ?? behindShim.command;
+    const via = behindShim.prefix.length > 0 ? `, run with ${behindShim.command}` : '';
+    return { available: true, detail: `${this.requires} is a shim for ${target}${via}` };
   }
 
   async run(prompt: string, options: RunOptions): Promise<AgentResult> {

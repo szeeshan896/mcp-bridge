@@ -145,6 +145,13 @@ npm install                 # builds dist/ via the prepare script
 node dist/index.js --agents # see which agents are usable here
 ```
 
+Check an agent really answers before wiring anything up — the built-in commands are each
+tool's documented non-interactive mode, but those flags do change between releases:
+
+```bash
+node dist/index.js --ask claude "reply with exactly: OK"
+```
+
 Then point your client at it, with an absolute path — the client runs it from whatever
 directory it likes, so a relative one will not resolve:
 
