@@ -9,11 +9,12 @@ import { AgentRegistry } from '../src/agents/registry.js';
 import type { Config } from '../src/config.js';
 import { createServer } from '../src/server.js';
 import { TaskStore } from '../src/tasks.js';
+import { echoCommand } from './helpers.js';
 
 const config: Config = {
   maxOutputChars: 60_000,
   agents: {
-    echoer: { description: 'echoes back', command: ['echo', '{prompt}'], timeoutMs: 10_000 },
+    echoer: { description: 'echoes back', command: echoCommand, timeoutMs: 10_000 },
     ghost: { description: 'absent', command: ['nope-xyz-123', '{prompt}'], timeoutMs: 5_000 },
   },
 };

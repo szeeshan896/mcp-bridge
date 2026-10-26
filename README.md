@@ -1,5 +1,7 @@
 # MCP Bridge
 
+[![CI](https://github.com/szeeshan896/mcpbridge/actions/workflows/ci.yml/badge.svg)](https://github.com/szeeshan896/mcpbridge/actions/workflows/ci.yml)
+
 Delegate work to another AI agent from inside the one you are already in.
 
 ```bash
@@ -106,6 +108,18 @@ That mode binds loopback only, and rejects requests whose `Host` header is not
 `127.0.0.1`/`localhost` — otherwise a web page you visit could make your browser POST to
 the port and run `ask_agent` on your machine. Loopback binding alone does not stop that.
 
+## On Windows
+
+An agent whose command resolves to a `.cmd` or `.bat` shim — which is how npm-installed
+CLIs appear on Windows — is refused rather than run, because a batch file can only be
+invoked through a shell and putting a prompt through a shell is the one thing this program
+must not do. `list_agents` says so and names the fix: point the agent at the real
+executable.
+
+```json
+{ "agents": { "claude": { "command": ["node", "C:\\Users\\you\\AppData\\Roaming\\npm\\node_modules\\@anthropic-ai\\claude-code\\cli.js", "-p", "{prompt}"] } } }
+```
+
 ## What it will not do
 
 - **Long tasks hit a timeout.** `ask_agent` is synchronous and the client has its own
@@ -118,7 +132,7 @@ the port and run `ask_agent` on your machine. Loopback binding alone does not st
 
 ```bash
 npm install
-npm test          # typecheck + 30 tests
+npm test          # typecheck + 32 tests
 npm run build
 npm start         # stdio, from source
 ```
@@ -131,6 +145,7 @@ npm start         # stdio, from source
 
 ```
 src/agents/   cli.ts (spawns a command), ollama.ts (local model), registry.ts, types.ts
+test/fixtures/agent.mjs  a Node stand-in for an agent CLI, so the suite runs on Windows
 src/config.ts built-in defaults and the config file
 src/tasks.ts  background tasks behind start_task / get_task
 src/server.ts the four tools

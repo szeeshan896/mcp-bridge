@@ -3,11 +3,12 @@ import { test } from 'node:test';
 
 import { AgentRegistry } from '../src/agents/registry.js';
 import type { Config } from '../src/config.js';
+import { echoCommand } from './helpers.js';
 
 const config: Config = {
   maxOutputChars: 60_000,
   agents: {
-    echoer: { description: 'echoes', command: ['echo', '{prompt}'], timeoutMs: 5_000 },
+    echoer: { description: 'echoes', command: echoCommand, timeoutMs: 5_000 },
     ghost: { description: 'absent', command: ['nope-xyz-123', '{prompt}'], timeoutMs: 5_000 },
     local: { type: 'ollama', description: 'local model', baseUrl: 'http://127.0.0.1:1' },
   },

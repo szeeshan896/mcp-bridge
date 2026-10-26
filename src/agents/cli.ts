@@ -35,13 +35,25 @@ export class CliAgent implements Agent {
   }
 
   async probe(): Promise<{ available: boolean; detail: string }> {
-    const found = await onPath(this.requires);
-    return found
-      ? { available: true, detail: `${this.requires} found on PATH` }
-      : { available: false, detail: `${this.requires} is not on PATH — install it or fix the command` };
+    const resolved = await resolveOnPath(this.requires);
+    if (!resolved) {
+      return { available: false, detail: `${this.requires} is not on PATH — install it or fix the command` };
+    }
+    if (needsAShell(resolved)) {
+      return { available: false, detail: batchFileAdvice(this.requires, resolved) };
+    }
+    return { available: true, detail: `${this.requires} found at ${resolved}` };
   }
 
-  run(prompt: string, options: RunOptions): Promise<AgentResult> {
+  async run(prompt: string, options: RunOptions): Promise<AgentResult> {
+    const resolved = await resolveOnPath(this.requires);
+    if (resolved && needsAShell(resolved)) {
+      return failed(this.name, batchFileAdvice(this.requires, resolved));
+    }
+    return this.spawnAgent(prompt, options);
+  }
+
+  private spawnAgent(prompt: string, options: RunOptions): Promise<AgentResult> {
     const argv = this.config.command.map((part) => part.replaceAll(PROMPT_PLACEHOLDER, prompt));
     const [command, ...args] = argv as [string, ...string[]];
     const timeoutMs = this.config.timeoutMs ?? 300_000;
@@ -126,18 +138,43 @@ function killTree(pid: number | undefined): void {
   }
 }
 
-export async function onPath(executable: string): Promise<boolean> {
+/**
+ * A .cmd or .bat can only be run through a shell, and running the prompt through a shell
+ * is exactly what this program must never do: quoting rules for batch files are their own
+ * minefield (see CVE-2024-27980). So such an agent is refused with the fix, rather than
+ * made to work unsafely or left to fail as a bare ENOENT.
+ */
+export function needsAShell(resolvedPath: string): boolean {
+  if (process.platform !== 'win32') return false;
+  const lower = resolvedPath.toLowerCase();
+  return lower.endsWith('.cmd') || lower.endsWith('.bat');
+}
+
+function batchFileAdvice(executable: string, resolved: string): string {
+  return (
+    `${executable} resolves to ${resolved}, a Windows batch shim, which can only run via a ` +
+    `shell — and passing a prompt through a shell is unsafe. Point this agent at the real ` +
+    `executable instead, e.g. "command": ["node", "C:\\path\\to\\${executable}\\cli.js", "{prompt}"].`
+  );
+}
+
+export async function resolveOnPath(executable: string): Promise<string | null> {
   if (executable.includes(sep) || executable.includes('/')) {
-    return accessible(executable);
+    return (await accessible(executable)) ? executable : null;
   }
   const dirs = (process.env.PATH ?? '').split(delimiter).filter(Boolean);
-  const suffixes = process.platform === 'win32' ? ['.exe', '.cmd', '.bat', ''] : [''];
+  const suffixes = process.platform === 'win32' ? ['.exe', '.com', '.cmd', '.bat', ''] : [''];
   for (const dir of dirs) {
     for (const suffix of suffixes) {
-      if (await accessible(join(dir, executable + suffix))) return true;
+      const candidate = join(dir, executable + suffix);
+      if (await accessible(candidate)) return candidate;
     }
   }
-  return false;
+  return null;
+}
+
+export async function onPath(executable: string): Promise<boolean> {
+  return (await resolveOnPath(executable)) !== null;
 }
 
 async function accessible(path: string): Promise<boolean> {

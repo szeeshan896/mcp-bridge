@@ -5,8 +5,9 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { CliAgent } from '../src/agents/cli.js';
 import type { Agent } from '../src/agents/types.js';
 import { TaskStore } from '../src/tasks.js';
+import { echoCommand } from './helpers.js';
 
-const echoer = new CliAgent('echoer', { command: ['echo', '{prompt}'], timeoutMs: 10_000 }, 60_000);
+const echoer = new CliAgent('echoer', { command: echoCommand, timeoutMs: 10_000 }, 60_000);
 
 async function settle(store: TaskStore, id: string, attempts = 60) {
   for (let i = 0; i < attempts; i += 1) {
