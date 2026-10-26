@@ -20,7 +20,21 @@ test('falls back to defaults when there is no config file', () => {
 });
 
 test('ships usable defaults so it works with no configuration', () => {
-  assert.deepEqual(Object.keys(DEFAULT_CONFIG.agents).sort(), ['claude', 'codex', 'gemini', 'ollama']);
+  assert.deepEqual(
+    Object.keys(DEFAULT_CONFIG.agents).sort(),
+    ['antigravity', 'claude', 'codex', 'gemini', 'ollama'],
+  );
+});
+
+test('every default agent is one the registry can actually build', async () => {
+  // a default with a malformed command would ship as a BrokenAgent and nobody would
+  // notice until a user ran --agents
+  const { AgentRegistry } = await import('../src/agents/registry.js');
+  const registry = new AgentRegistry(DEFAULT_CONFIG);
+
+  for (const status of await registry.statuses()) {
+    assert.doesNotMatch(status.detail, /misconfigured/, status.name);
+  }
 });
 
 test('adds agents from the file and keeps the defaults', () => {
