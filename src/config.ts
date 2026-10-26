@@ -101,6 +101,13 @@ export const DEFAULT_CONFIG: Config = {
       command: ['gemini', '-p', '{prompt}'],
       timeoutMs: 300_000,
     },
+    antigravity: {
+      // Google withdrew Gemini CLI from individual accounts, pointing them at Antigravity
+      // instead; its CLI reaches the same models through that login, with no API key
+      description: 'Gemini models through the Antigravity CLI',
+      command: ['agy', '-p', '{prompt}'],
+      timeoutMs: 300_000,
+    },
     ollama: {
       type: 'ollama',
       description: 'A model running locally in Ollama — no account, no network, always awake',

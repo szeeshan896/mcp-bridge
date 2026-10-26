@@ -229,8 +229,17 @@ interactively once to sign in again; nothing here needs changing.
 
 **A provider that has withdrawn a tier.** Gemini CLI now answers `IneligibleTierError:
 This client is no longer supported for Gemini Code Assist for individuals`, pointing at
-Antigravity. No flag works around that. Gemini models are still reachable through Google's
-OpenAI-compatible endpoint with an AI Studio key, which this bridge speaks already:
+Antigravity. No flag works around that — but Antigravity ships its own CLI, `agy`, with a
+print mode, and it reaches the same models through that login. The built-in `antigravity`
+agent uses it, so this needs no key at all.
+
+`agy` can auto-approve the tool permissions it would otherwise ask about, via
+`--dangerously-skip-permissions`. That is deliberately not in the default command: it lets
+a delegated agent edit files and run commands unattended, which is yours to decide, not a
+default to inherit. Add it to that agent's `command` if you want it.
+
+Failing both, Gemini models are also reachable through Google's OpenAI-compatible endpoint
+with an AI Studio key, which this bridge speaks already:
 
 ```json
 {
