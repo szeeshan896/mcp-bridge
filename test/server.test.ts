@@ -7,12 +7,14 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
 import { AgentRegistry } from '../src/agents/registry.js';
 import type { Config } from '../src/config.js';
+import { ConcurrencyLimit } from '../src/limit.js';
 import { createServer } from '../src/server.js';
 import { TaskStore } from '../src/tasks.js';
 import { echoCommand } from './helpers.js';
 
 const config: Config = {
   maxOutputChars: 60_000,
+  maxConcurrent: 2,
   agents: {
     echoer: { description: 'echoes back', command: echoCommand, timeoutMs: 10_000 },
     ghost: { description: 'absent', command: ['nope-xyz-123', '{prompt}'], timeoutMs: 5_000 },
@@ -22,7 +24,8 @@ const config: Config = {
 /** A real client talking to a real server, the way a connected agent would. */
 async function connect() {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  const server = createServer(new AgentRegistry(config), new TaskStore());
+  const limit = new ConcurrencyLimit(config.maxConcurrent);
+  const server = createServer(new AgentRegistry(config), new TaskStore(limit), limit);
   const client = new Client({ name: 'test-client', version: '1.0.0' });
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
   return { client, close: () => Promise.all([client.close(), server.close()]) };

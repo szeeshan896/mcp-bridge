@@ -4,6 +4,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 import { CliAgent } from '../src/agents/cli.js';
 import type { Agent } from '../src/agents/types.js';
+import { ConcurrencyLimit } from '../src/limit.js';
 import { TaskStore } from '../src/tasks.js';
 import { echoCommand } from './helpers.js';
 
@@ -18,7 +19,7 @@ async function settle(store: TaskStore, id: string, attempts = 60) {
 }
 
 test('start returns an id before the work is done', () => {
-  const store = new TaskStore();
+  const store = new TaskStore(new ConcurrencyLimit(2));
 
   const task = store.start(echoer, 'hello', {});
 
@@ -27,7 +28,7 @@ test('start returns an id before the work is done', () => {
 });
 
 test('the task reaches finished and carries the result', async () => {
-  const store = new TaskStore();
+  const store = new TaskStore(new ConcurrencyLimit(2));
 
   const { id } = store.start(echoer, 'delegated work', {});
   const task = await settle(store, id);
@@ -38,7 +39,7 @@ test('the task reaches finished and carries the result', async () => {
 });
 
 test('an agent that throws becomes a finished task with diagnostics, not a lost one', async () => {
-  const store = new TaskStore();
+  const store = new TaskStore(new ConcurrencyLimit(2));
   const exploding: Agent = {
     name: 'exploding',
     description: 'throws',
@@ -56,5 +57,5 @@ test('an agent that throws becomes a finished task with diagnostics, not a lost 
 });
 
 test('an unknown id is simply absent', () => {
-  assert.equal(new TaskStore().get('no-such-id'), undefined);
+  assert.equal(new TaskStore(new ConcurrencyLimit(2)).get('no-such-id'), undefined);
 });

@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
 import type { AgentRegistry } from './agents/registry.js';
+import type { ConcurrencyLimit } from './limit.js';
 import type { TaskStore } from './tasks.js';
 
 const PACKAGE_NAME = 'mcpbridge';
@@ -11,7 +12,11 @@ function json(value: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }] };
 }
 
-export function createServer(registry: AgentRegistry, tasks: TaskStore): McpServer {
+export function createServer(
+  registry: AgentRegistry,
+  tasks: TaskStore,
+  limit: ConcurrencyLimit,
+): McpServer {
   const server = new McpServer(
     { name: PACKAGE_NAME, version: PACKAGE_VERSION },
     {
@@ -33,7 +38,9 @@ export function createServer(registry: AgentRegistry, tasks: TaskStore): McpServ
       description:
         'List the AI agents this bridge can delegate to, and whether each one is usable right ' +
         'now. Check this before delegating: "available": false carries the reason, such as a ' +
-        'CLI that is not installed or an Ollama that is not running.',
+        'CLI that is not installed or an Ollama that is not running. "readsFiles" says ' +
+        'whether passing workingDirectory actually lets that agent see your files — when it ' +
+        'is false, put the content in the prompt instead.',
       inputSchema: {},
     },
     async () => json(await registry.statuses()),
@@ -68,7 +75,8 @@ export function createServer(registry: AgentRegistry, tasks: TaskStore): McpServ
           diagnostics: `no agent named "${agent}" is configured. Available: ${registry.names().join(', ')}`,
         });
       }
-      return json(await target.run(prompt, workingDirectory ? { cwd: workingDirectory } : {}));
+      const options = workingDirectory ? { cwd: workingDirectory } : {};
+      return json(await limit.run(() => target.run(prompt, options)));
     },
   );
 

@@ -7,6 +7,7 @@ import { echoCommand } from './helpers.js';
 
 const config: Config = {
   maxOutputChars: 60_000,
+  maxConcurrent: 2,
   agents: {
     echoer: { description: 'echoes', command: echoCommand, timeoutMs: 5_000 },
     ghost: { description: 'absent', command: ['nope-xyz-123', '{prompt}'], timeoutMs: 5_000 },

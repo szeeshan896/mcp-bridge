@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { Agent, AgentResult, RunOptions } from './agents/types.js';
+import type { ConcurrencyLimit } from './limit.js';
 
 export interface Task {
   id: string;
@@ -23,6 +24,8 @@ const MAX_TASKS = 200;
 export class TaskStore {
   private readonly tasks = new Map<string, Task>();
 
+  constructor(private readonly limit: ConcurrencyLimit) {}
+
   start(agent: Agent, prompt: string, options: RunOptions): Task {
     this.prune();
     const task: Task = {
@@ -35,8 +38,8 @@ export class TaskStore {
     this.tasks.set(task.id, task);
 
     // deliberately not awaited: the point is to return an id now
-    void agent
-      .run(prompt, options)
+    void this.limit
+      .run(() => agent.run(prompt, options))
       .then((result) => this.finish(task.id, result))
       .catch((error: unknown) =>
         this.finish(task.id, {
@@ -44,6 +47,7 @@ export class TaskStore {
           succeeded: false,
           output: '',
           diagnostics: `the task threw: ${(error as Error).message}`,
+          notes: '',
           durationMs: 0,
           timedOut: false,
           outputTruncated: false,

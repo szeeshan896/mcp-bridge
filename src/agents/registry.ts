@@ -8,6 +8,8 @@ export interface AgentStatus {
   description: string;
   requires: string;
   available: boolean;
+  /** whether pointing it at a directory actually lets it read those files */
+  readsFiles: boolean;
   detail: string;
 }
 
@@ -33,7 +35,14 @@ export class AgentRegistry {
     const probed = await Promise.all(
       [...this.agents.values()].map(async (agent) => {
         const { available, detail } = await agent.probe();
-        return { name: agent.name, description: agent.description, requires: agent.requires, available, detail };
+        return {
+          name: agent.name,
+          description: agent.description,
+          requires: agent.requires,
+          available,
+          readsFiles: agent.readsFiles,
+          detail,
+        };
       }),
     );
     return probed.sort((a, b) => a.name.localeCompare(b.name));

@@ -5,6 +5,9 @@
 //
 // modes:
 //   echo                  write the prompt to stdout
+//   stdin                 echo back everything read from stdin
+//   ansi                  write colour escape codes around the answer
+//   env:<name>            write the value of that environment variable
 //   fail                  write to stderr and exit 3
 //   flood                 write ~130KB to stdout and stderr at once
 //   big:<n>               write n characters to stdout
@@ -35,6 +38,14 @@ if (mode === 'echo') {
   spawn(process.execPath, ['-e', `setTimeout(() => require("fs").writeFileSync(${JSON.stringify(marker)}, "x"), 1000)`],
     { detached: false, stdio: 'ignore' });
   setTimeout(() => writeFileSync(marker, 'parent'), 60_000);
+} else if (mode === 'stdin') {
+  const chunks = [];
+  for await (const chunk of process.stdin) chunks.push(chunk);
+  process.stdout.write(Buffer.concat(chunks).toString('utf8'));
+} else if (mode === 'ansi') {
+  process.stdout.write('\u001B[31mred\u001B[0m answer \u001B[1mand bold\u001B[22m');
+} else if (mode.startsWith('env:')) {
+  process.stdout.write(process.env[mode.slice(4)] ?? '(unset)');
 } else {
   process.stderr.write(`unknown mode: ${mode}`);
   process.exit(2);

@@ -8,13 +8,17 @@ import { type Agent, type AgentResult, type RunOptions, failed, truncate } from 
 
 export const PROMPT_PLACEHOLDER = '{prompt}';
 
+/** Colour and spinners in an answer are noise; most CLIs honour these. */
+const QUIET_ENV = { NO_COLOR: '1', FORCE_COLOR: '0', TERM: 'dumb' };
+
 /**
  * An agent that is a command-line tool. The command comes from configuration and the
- * prompt only ever fills {prompt}, as one argv element handed straight to spawn with no
- * shell, so nothing in a prompt can be read as a shell metacharacter.
+ * prompt only ever fills {prompt} or goes down stdin — never through a shell, so nothing
+ * in a prompt can be read as a shell metacharacter.
  */
 export class CliAgent implements Agent {
   readonly requires: string;
+  readonly readsFiles = true;
 
   constructor(
     readonly name: string,
@@ -24,10 +28,16 @@ export class CliAgent implements Agent {
     if (config.command.length === 0) {
       throw new Error(`agent "${name}": command must not be empty`);
     }
-    if (!config.command.some((part) => part.includes(PROMPT_PLACEHOLDER))) {
-      throw new Error(`agent "${name}": command needs one ${PROMPT_PLACEHOLDER} element`);
+    if (this.promptVia === 'argv' && !config.command.some((p) => p.includes(PROMPT_PLACEHOLDER))) {
+      throw new Error(
+        `agent "${name}": command needs one ${PROMPT_PLACEHOLDER} element, or promptVia: "stdin"`,
+      );
     }
     this.requires = config.command[0]!;
+  }
+
+  private get promptVia(): 'argv' | 'stdin' {
+    return this.config.promptVia ?? 'argv';
   }
 
   get description(): string {
@@ -54,7 +64,10 @@ export class CliAgent implements Agent {
   }
 
   private spawnAgent(prompt: string, options: RunOptions): Promise<AgentResult> {
-    const argv = this.config.command.map((part) => part.replaceAll(PROMPT_PLACEHOLDER, prompt));
+    const viaStdin = this.promptVia === 'stdin';
+    const argv = viaStdin
+      ? [...this.config.command]
+      : this.config.command.map((part) => part.replaceAll(PROMPT_PLACEHOLDER, prompt));
     const [command, ...args] = argv as [string, ...string[]];
     const timeoutMs = this.config.timeoutMs ?? 300_000;
     const cwd = options.cwd ?? this.config.cwd;
@@ -65,62 +78,81 @@ export class CliAgent implements Agent {
       try {
         child = spawn(command, args, {
           cwd,
+          env: { ...process.env, ...QUIET_ENV, ...(this.config.env ?? {}) },
           // own process group, so a timeout can take the whole tree down: killing just the
           // child leaves grandchildren alive, and an orphan holding the pipe keeps us
           // waiting for its lifetime
           detached: process.platform !== 'win32',
-          stdio: ['ignore', 'pipe', 'pipe'],
+          stdio: [viaStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
         });
       } catch (error) {
-        resolve(failed(this.name, `could not start ${command}: ${(error as Error).message}`));
+        resolve(failed(this.name, this.startupAdvice(command, error as Error, prompt)));
         return;
       }
 
       let stdout = '';
       let stderr = '';
       let settled = false;
-      // stdout and stderr are consumed as they arrive, so neither pipe can fill and stall
-      // the child while we are busy with the other
-      child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8'); });
-      child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8'); });
-
-      const timer = setTimeout(() => {
+      const finish = (result: AgentResult) => {
         if (settled) return;
         settled = true;
+        clearTimeout(timer);
+        resolve(result);
+      };
+
+      // stdout and stderr are consumed as they arrive, so neither pipe can fill and stall
+      // the child while we are busy with the other
+      child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8'); });
+      child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8'); });
+
+      if (viaStdin && child.stdin) {
+        child.stdin.on('error', () => { /* the agent closed stdin early; its output still counts */ });
+        child.stdin.end(prompt, 'utf8');
+      }
+
+      const timer = setTimeout(() => {
         killTree(child.pid);
-        resolve(failed(this.name,
+        finish(failed(this.name,
           `${this.name} did not finish within ${timeoutMs}ms and was stopped. Try a smaller task.`,
           Date.now() - started, true));
       }, timeoutMs);
 
       child.on('error', (error) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve(failed(this.name,
-          `could not start ${command}. Is it installed and on PATH? (${error.message})`,
-          Date.now() - started));
+        finish(failed(this.name, this.startupAdvice(command, error, prompt), Date.now() - started));
       });
 
       child.on('close', (code) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
         const body = truncate(stdout, this.maxOutputChars);
-        if (code === 0) {
-          resolve({
-            agent: this.name, succeeded: true, output: body.text, diagnostics: '',
-            durationMs: Date.now() - started, timedOut: false, outputTruncated: body.truncated,
-          });
-        } else {
-          resolve({
-            agent: this.name, succeeded: false, output: body.text,
-            diagnostics: `${this.name} exited with code ${code}. ${truncate(stderr, 4_000).text}`.trim(),
-            durationMs: Date.now() - started, timedOut: false, outputTruncated: body.truncated,
-          });
-        }
+        finish({
+          agent: this.name,
+          succeeded: code === 0,
+          output: body.text,
+          diagnostics: code === 0
+            ? ''
+            : `${this.name} exited with code ${code}. ${truncate(stderr, 4_000).text}`.trim(),
+          notes: '',
+          durationMs: Date.now() - started,
+          timedOut: false,
+          outputTruncated: body.truncated,
+        });
       });
     });
+  }
+
+  /**
+   * E2BIG is the operating system refusing an over-long argument list, which a prompt
+   * carrying file contents reaches easily. On its own the error says nothing a caller
+   * could act on, so it is translated into the setting that removes the limit.
+   */
+  private startupAdvice(command: string, error: Error & { code?: string }, prompt: string): string {
+    if (error.code === 'E2BIG') {
+      return (
+        `the prompt is too large to pass as a command-line argument (${prompt.length} characters; ` +
+        `the limit is around 64KB on Linux and 32KB on Windows). Set "promptVia": "stdin" for ` +
+        `agent "${this.name}" if ${command} reads its prompt from a pipe, or send a shorter prompt.`
+      );
+    }
+    return `could not start ${command}. Is it installed and on PATH? (${error.message})`;
   }
 }
 
@@ -154,7 +186,7 @@ function batchFileAdvice(executable: string, resolved: string): string {
   return (
     `${executable} resolves to ${resolved}, a Windows batch shim, which can only run via a ` +
     `shell — and passing a prompt through a shell is unsafe. Point this agent at the real ` +
-    `executable instead, e.g. "command": ["node", "C:\\path\\to\\${executable}\\cli.js", "{prompt}"].`
+    `executable instead, e.g. "command": ["node", "C:\\\\path\\\\to\\\\${executable}\\\\cli.js", "{prompt}"].`
   );
 }
 

@@ -6,6 +6,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 
 import { AgentRegistry } from './agents/registry.js';
 import { configPath, loadConfig } from './config.js';
+import { ConcurrencyLimit } from './limit.js';
 import { createServer } from './server.js';
 import { TaskStore } from './tasks.js';
 
@@ -32,7 +33,8 @@ async function main(): Promise<void> {
 
   const { config, source } = loadConfig();
   const registry = new AgentRegistry(config);
-  const tasks = new TaskStore();
+  const limit = new ConcurrencyLimit(config.maxConcurrent);
+  const tasks = new TaskStore(limit);
 
   if (argv.includes('--agents')) {
     process.stdout.write(`agents from ${source}\n\n`);
@@ -40,6 +42,9 @@ async function main(): Promise<void> {
       process.stdout.write(
         `${status.available ? '✓' : '✗'} ${status.name.padEnd(10)} ${status.detail}\n`,
       );
+      if (!status.readsFiles) {
+        process.stdout.write(`${''.padEnd(13)}cannot read files — inline context in the prompt\n`);
+      }
     }
     return;
   }
@@ -49,7 +54,7 @@ async function main(): Promise<void> {
     // stdio: the transport owns stdout, so every diagnostic must go to stderr or it
     // corrupts the protocol stream
     console.error(`mcpbridge on stdio, agents from ${source}`);
-    await createServer(registry, tasks).connect(new StdioServerTransport());
+    await createServer(registry, tasks, limit).connect(new StdioServerTransport());
     return;
   }
 
@@ -76,7 +81,7 @@ async function main(): Promise<void> {
         allowedHosts: [`127.0.0.1:${port}`, `localhost:${port}`],
       });
       res.on('close', () => void transport.close());
-      await createServer(registry, tasks).connect(transport);
+      await createServer(registry, tasks, limit).connect(transport);
       await transport.handleRequest(req, res);
     })().catch((error: unknown) => {
       console.error('request failed:', (error as Error).message);

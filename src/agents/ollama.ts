@@ -14,6 +14,8 @@ interface TagsResponse {
  */
 export class OllamaAgent implements Agent {
   readonly requires: string;
+  // an HTTP model sees only what is in the prompt; a directory means nothing to it
+  readonly readsFiles = false;
 
   constructor(
     readonly name: string,
@@ -49,8 +51,15 @@ export class OllamaAgent implements Agent {
     return { available: true, detail: `Ollama at ${this.baseUrl}, using ${this.config.model ?? models[0]}` };
   }
 
-  async run(prompt: string, _options: RunOptions): Promise<AgentResult> {
+  async run(prompt: string, options: RunOptions): Promise<AgentResult> {
     const started = Date.now();
+    // the caller may have passed a directory expecting the agent to read it; saying so
+    // beats letting it wonder why the answer ignores the code
+    const note = options.cwd
+      ? `workingDirectory (${options.cwd}) was ignored: ${this.name} is a model behind an HTTP ` +
+        `API and cannot read files. Inline the content you want it to see in the prompt, or ` +
+        `delegate to an agent that list_agents reports with "readsFiles": true.`
+      : '';
     const timeoutMs = this.config.timeoutMs ?? 300_000;
 
     let model = this.config.model;
@@ -83,7 +92,7 @@ export class OllamaAgent implements Agent {
       const payload = (await response.json()) as { response?: string };
       const body = truncate(payload.response ?? '', this.maxOutputChars);
       return {
-        agent: this.name, succeeded: true, output: body.text, diagnostics: '',
+        agent: this.name, succeeded: true, output: body.text, diagnostics: '', notes: note,
         durationMs: Date.now() - started, timedOut: false, outputTruncated: body.truncated,
       };
     } catch (error) {

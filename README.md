@@ -66,10 +66,16 @@ replace the built-in one of the same name outright.
 
 ```json
 {
+  "maxConcurrent": 2,
   "agents": {
     "gemini": {
       "command": ["gemini", "--prompt", "{prompt}"],
       "timeoutMs": 300000
+    },
+    "big-context": {
+      "command": ["some-cli", "--read-stdin"],
+      "promptVia": "stdin",
+      "env": { "SOME_CLI_QUIET": "1" }
     },
     "local": {
       "type": "ollama",
@@ -79,6 +85,20 @@ replace the built-in one of the same name outright.
   }
 }
 ```
+
+**`promptVia`** decides how the prompt reaches the agent. The default, `"argv"`, is subject
+to the operating system's argument-size limit — about 64KB on Linux and 32KB on Windows —
+which a prompt carrying file contents passes easily, and past it the spawn fails outright.
+`"stdin"` has no such limit and is right for any CLI that reads its prompt from a pipe. The
+built-in `claude` agent uses it for that reason. If you hit the limit, the error names this
+setting.
+
+**`maxConcurrent`** caps how many delegations run at once (default 2). Each one is a whole
+model doing real work, so an unbounded number saturates the machine and spends the quota of
+whatever account is behind it.
+
+Terminal escape codes are stripped from every answer, and agents run with `NO_COLOR=1`, so
+colour and spinners do not end up in the calling model's context as if they were content.
 
 Each tool's non-interactive flags change between releases, so if a built-in default does
 not match your version, override it here — `--agents` will confirm.
@@ -132,7 +152,7 @@ executable.
 
 ```bash
 npm install
-npm test          # typecheck + 32 tests
+npm test          # typecheck + 41 tests
 npm run build
 npm start         # stdio, from source
 ```
@@ -148,6 +168,7 @@ src/agents/   cli.ts (spawns a command), ollama.ts (local model), registry.ts, t
 test/fixtures/agent.mjs  a Node stand-in for an agent CLI, so the suite runs on Windows
 src/config.ts built-in defaults and the config file
 src/tasks.ts  background tasks behind start_task / get_task
+src/limit.ts  the concurrency cap both paths queue through
 src/server.ts the four tools
 src/index.ts  entry point and transport choice
 ```

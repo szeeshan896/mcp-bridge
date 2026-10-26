@@ -110,3 +110,45 @@ test('resolveOnPath finds a real executable and misses an absent one', async () 
   assert.ok(await resolveOnPath(process.execPath));
   assert.equal(await resolveOnPath('nope-xyz-123'), null);
 });
+
+test('a prompt sent via stdin is not subject to the argv size limit', async () => {
+  // argv tops out around 64KB on Linux and 32KB on Windows; this is well past both
+  const big = 'y'.repeat(400_000);
+  const agent = new CliAgent(
+    'stdin-agent',
+    { command: [process.execPath, FIXTURE, 'stdin', 'unused'], promptVia: 'stdin', timeoutMs: 20_000 },
+    1_000_000,
+  );
+
+  const result = await agent.run(big, {});
+
+  assert.equal(result.succeeded, true);
+  assert.equal(result.output.length, big.length);
+});
+
+test('an over-long argv prompt is explained, with the setting that fixes it', async () => {
+  const result = await fixture('echo', 20_000, 1_000_000).run('z'.repeat(400_000), {});
+
+  assert.equal(result.succeeded, false);
+  assert.match(result.diagnostics, /too large to pass as a command-line argument/);
+  assert.match(result.diagnostics, /"promptVia": "stdin"/);
+});
+
+test('stdin mode does not require a prompt placeholder', () => {
+  assert.doesNotThrow(() =>
+    new CliAgent('s', { command: ['agent', '--read-stdin'], promptVia: 'stdin' }, 100));
+  assert.throws(() => new CliAgent('a', { command: ['agent', '--go'] }, 100), /promptVia/);
+});
+
+test('terminal escape codes are stripped out of the answer', async () => {
+  const result = await fixture('ansi').run('x', {});
+
+  assert.equal(result.output, 'red answer and bold');
+  assert.ok(!result.output.includes('\u001B'), 'no escape sequences may survive');
+});
+
+test('agents run with colour disabled', async () => {
+  const result = await fixture('env:NO_COLOR').run('x', {});
+
+  assert.equal(result.output, '1');
+});
