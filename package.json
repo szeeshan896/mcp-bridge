@@ -2,19 +2,40 @@
   "name": "mcpbridge",
   "version": "0.1.0",
   "description": "Delegate work to another AI agent from inside the one you are already in, over MCP, with no API keys",
-  "keywords": ["mcp", "model-context-protocol", "ai", "agent", "claude", "gemini", "codex", "ollama", "delegation"],
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ai",
+    "agent",
+    "claude",
+    "gemini",
+    "codex",
+    "ollama",
+    "delegation"
+  ],
   "license": "MIT",
   "author": "Syed Zeeshan Ali",
-  "repository": { "type": "git", "url": "git+https://github.com/szeeshan896/mcpbridge.git" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/szeeshan896/mcpbridge.git"
+  },
   "homepage": "https://github.com/szeeshan896/mcpbridge#readme",
   "type": "module",
-  "bin": { "mcpbridge": "dist/index.js" },
-  "files": ["dist", "README.md", "LICENSE"],
-  "engines": { "node": ">=20" },
+  "bin": {
+    "mcpbridge": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "tsc",
     "prepare": "npm run build",
-    "test": "tsc --noEmit && node --test --import tsx test/*.test.ts",
+    "test": "tsc --noEmit && node --test --import tsx \"test/**/*.test.ts\"",
     "start": "tsx src/index.ts"
   },
   "dependencies": {

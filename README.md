@@ -139,7 +139,7 @@ npm start         # stdio, from source
 
 | | |
 |---|---|
-| Runtime | Node 20+ |
+| Runtime | Node 22+ |
 | SDK | `@modelcontextprotocol/sdk` 1.32.2 |
 | Package size | ~16 KB |
 
