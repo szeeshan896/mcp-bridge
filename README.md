@@ -91,11 +91,12 @@ replace the built-in one of the same name outright.
 ```
 
 **`promptVia`** decides how the prompt reaches the agent. The default, `"argv"`, is subject
-to the operating system's argument-size limit — about 64KB on Linux and 32KB on Windows —
-which a prompt carrying file contents passes easily, and past it the spawn fails outright.
+to the operating system's argument-size limit, which varies a lot — roughly 128KB per
+argument on Linux, about 1MB on macOS, and as little as 32KB on Windows. A prompt carrying
+file contents passes the lower ones easily, and past the limit the spawn fails outright.
 `"stdin"` has no such limit and is right for any CLI that reads its prompt from a pipe. The
-built-in `claude` agent uses it for that reason. If you hit the limit, the error names this
-setting.
+built-in `claude` agent uses it for that reason. If you do hit the limit, the error names
+this setting instead of leaving you with an errno.
 
 **`maxConcurrent`** caps how many delegations run at once (default 2). Each one is a whole
 model doing real work, so an unbounded number saturates the machine and spends the quota of
@@ -203,7 +204,7 @@ executable.
 
 ```bash
 npm install
-npm test          # typecheck + 58 tests
+npm test          # typecheck + 60 tests
 npm run build
 npm start         # stdio, from source
 ```

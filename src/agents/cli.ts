@@ -139,21 +139,38 @@ export class CliAgent implements Agent {
     });
   }
 
-  /**
-   * E2BIG is the operating system refusing an over-long argument list, which a prompt
-   * carrying file contents reaches easily. On its own the error says nothing a caller
-   * could act on, so it is translated into the setting that removes the limit.
-   */
   private startupAdvice(command: string, error: Error & { code?: string }, prompt: string): string {
-    if (error.code === 'E2BIG') {
-      return (
-        `the prompt is too large to pass as a command-line argument (${prompt.length} characters; ` +
-        `the limit is around 64KB on Linux and 32KB on Windows). Set "promptVia": "stdin" for ` +
-        `agent "${this.name}" if ${command} reads its prompt from a pipe, or send a shorter prompt.`
-      );
-    }
-    return `could not start ${command}. Is it installed and on PATH? (${error.message})`;
+    return startupAdvice(this.name, command, error, prompt);
   }
+}
+
+/**
+ * Both of these mean the operating system refused an over-long argument list, which a
+ * prompt carrying file contents reaches easily. POSIX reports E2BIG and Windows
+ * ENAMETOOLONG; treating only one of them as the size problem left Windows users with
+ * "is it installed?", which is the wrong thing to go and check.
+ */
+const ARG_TOO_LONG = new Set(['E2BIG', 'ENAMETOOLONG']);
+
+/**
+ * Turns a spawn failure into something the caller can act on. The size limit varies by
+ * platform — roughly 128KB per argument on Linux, about 1MB on macOS, and as little as
+ * 32KB on Windows — so the advice names the setting that removes it rather than a number.
+ */
+export function startupAdvice(
+  agent: string,
+  command: string,
+  error: Error & { code?: string },
+  prompt: string,
+): string {
+  if (error.code && ARG_TOO_LONG.has(error.code)) {
+    return (
+      `the prompt is too large to pass as a command-line argument (${prompt.length} characters; ` +
+      `the operating system's limit is as low as 32KB on Windows). Set "promptVia": "stdin" for ` +
+      `agent "${agent}" if ${command} reads its prompt from a pipe, or send a shorter prompt.`
+    );
+  }
+  return `could not start ${command}. Is it installed and on PATH? (${error.message})`;
 }
 
 /** Kills the process group on POSIX, the tree via taskkill on Windows. */

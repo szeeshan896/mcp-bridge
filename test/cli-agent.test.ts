@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
-import { CliAgent, needsAShell, resolveOnPath } from '../src/agents/cli.js';
+import { CliAgent, needsAShell, resolveOnPath, startupAdvice } from '../src/agents/cli.js';
 
 // the stand-in agent is a Node script, not a shell command, so these tests run unchanged
 // on Windows as well as POSIX
@@ -126,12 +126,36 @@ test('a prompt sent via stdin is not subject to the argv size limit', async () =
   assert.equal(result.output.length, big.length);
 });
 
-test('an over-long argv prompt is explained, with the setting that fixes it', async () => {
-  const result = await fixture('echo', 20_000, 1_000_000).run('z'.repeat(400_000), {});
+test('both the POSIX and Windows size errors are explained, with the fix', () => {
+  // the limit itself is the platform's business -- Linux reports E2BIG, Windows
+  // ENAMETOOLONG, and handling only one left the other saying "is it installed?"
+  for (const code of ['E2BIG', 'ENAMETOOLONG']) {
+    const advice = startupAdvice('a', 'some-cli', Object.assign(new Error('x'), { code }), 'p'.repeat(9));
 
-  assert.equal(result.succeeded, false);
-  assert.match(result.diagnostics, /too large to pass as a command-line argument/);
-  assert.match(result.diagnostics, /"promptVia": "stdin"/);
+    assert.match(advice, /too large to pass as a command-line argument/, code);
+    assert.match(advice, /"promptVia": "stdin"/, code);
+    assert.match(advice, /9 characters/, code);
+  }
+});
+
+test('a genuinely missing command is not mistaken for an oversized prompt', () => {
+  const advice = startupAdvice('a', 'ghost', Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }), 'p');
+
+  assert.match(advice, /Is it installed and on PATH/);
+});
+
+test('an argv prompt past this platform\'s limit is explained rather than mysterious', async () => {
+  // how much argv holds differs per platform -- ~128KB on Linux, ~1MB on macOS, ~32KB on
+  // Windows -- so the size is escalated until the OS refuses rather than assumed
+  for (const chars of [200_000, 2_000_000, 8_000_000]) {
+    const result = await fixture('echo', 20_000, 10_000_000).run('z'.repeat(chars), {});
+    if (!result.succeeded) {
+      assert.match(result.diagnostics, /too large to pass as a command-line argument/);
+      assert.match(result.diagnostics, /"promptVia": "stdin"/);
+      return;
+    }
+  }
+  assert.fail('no prompt size was refused; the limit should have been reached by 8MB');
 });
 
 test('stdin mode does not require a prompt placeholder', () => {
