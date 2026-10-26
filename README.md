@@ -8,7 +8,8 @@ Delegate work to another AI agent from inside the one you are already in.
 claude mcp add mcpbridge -- npx -y mcpbridge
 ```
 
-That is the whole setup. Now, while you are coding in Claude Code:
+That is the whole setup, once this is on npm. Until then, install from a clone — see
+**Installing** below. Now, while you are coding in Claude Code:
 
 > ask gemini through mcpbridge to review the caching layer in this module
 
@@ -132,6 +133,36 @@ npx mcpbridge --http 8808        # http://127.0.0.1:8808/mcp
 That mode binds loopback only, and rejects requests whose `Host` header is not
 `127.0.0.1`/`localhost` — otherwise a web page you visit could make your browser POST to
 the port and run `ask_agent` on your machine. Loopback binding alone does not stop that.
+
+## Installing
+
+Needs Node 22 or newer (`node --version`).
+
+```bash
+git clone https://github.com/szeeshan896/mcpbridge.git
+cd mcpbridge
+npm install                 # builds dist/ via the prepare script
+node dist/index.js --agents # see which agents are usable here
+```
+
+Then point your client at it, with an absolute path — the client runs it from whatever
+directory it likes, so a relative one will not resolve:
+
+```bash
+claude mcp add mcpbridge -- node "$(pwd)/dist/index.js"
+claude mcp list             # should say Connected
+```
+
+Once published, that collapses to `npm i -g mcpbridge` and
+`claude mcp add mcpbridge -- mcpbridge`, with no build step at all: the published package
+carries a prebuilt `dist/`.
+
+`npm i -g github:szeeshan896/mcpbridge` does **not** work, and the reason is worth knowing:
+installing from a git URL means building from source, a global install does not install
+devDependencies, and without `@types/node` and `typescript` the build fails with
+`TS2688: Cannot find type definition file for 'node'`. Installing from git into a project
+(`npm i github:szeeshan896/mcpbridge`) does work, because that path does install them.
+Publishing removes the question entirely.
 
 ## Reaching a model that has no CLI
 
