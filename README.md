@@ -159,9 +159,14 @@ Then point your client at it, with an absolute path — the client runs it from 
 directory it likes, so a relative one will not resolve:
 
 ```bash
-claude mcp add mcpbridge -- node "$(pwd)/dist/index.js"
+claude mcp add -s user mcpbridge -- node "$(pwd)/dist/index.js"
 claude mcp list             # should say Connected
 ```
+
+`-s user` matters: without it the server is registered for that one project, and a session
+started anywhere else connects to nothing — the model then sees no tools, and will reach
+for the agent's CLI directly if it happens to be on PATH, which looks like it worked while
+going nowhere near this bridge.
 
 Once published, that collapses to `npm i -g mcpbridge` and
 `claude mcp add mcpbridge -- mcpbridge`, with no build step at all: the published package
@@ -236,11 +241,6 @@ Antigravity. No flag works around that — but Antigravity ships its own CLI, `a
 print mode, and it reaches the same models through that login. The built-in `antigravity`
 agent uses it, so this needs no key at all.
 
-`agy` can auto-approve the tool permissions it would otherwise ask about, via
-`--dangerously-skip-permissions`. That is deliberately not in the default command: it lets
-a delegated agent edit files and run commands unattended, which is yours to decide, not a
-default to inherit. Add it to that agent's `command` if you want it.
-
 Failing both, Gemini models are also reachable through Google's OpenAI-compatible endpoint
 with an AI Studio key, which this bridge speaks already:
 
@@ -257,15 +257,38 @@ with an AI Studio key, which this bridge speaks already:
 }
 ```
 
-**A CLI that refuses to run unattended in a directory it does not trust.** Gemini CLI
-wants `--skip-trust` or `GEMINI_CLI_TRUST_WORKSPACE=true`. That is deliberately not set
-for you: it switches off a check on whatever directory a caller points the agent at, which
-is a decision to make yourself rather than inherit. Opt in per agent:
+**A CLI that refuses to act without a person present** — see **Running agents
+unattended** below.
+
+## Running agents unattended
+
+Every one of these tools has a guard that assumes a person is sitting there to answer it.
+Delegation has nobody, so each guard turns into a failure:
+
+| Agent | What it refuses | What lifts it |
+|---|---|---|
+| `codex` | a directory that is not a git repository | `--skip-git-repo-check` |
+| `antigravity` | acting without approval for each tool call | `--dangerously-skip-permissions` |
+| `gemini` | a workspace it has not been told to trust | `GEMINI_CLI_TRUST_WORKSPACE=true` |
+
+None of them are set for you, and that is the point: each gives up a check on whatever
+directory a caller names — code written without a way to undo it, files edited and
+commands run with nobody asked. Worth having, worth choosing deliberately.
 
 ```json
-{ "agents": { "gemini": { "command": ["gemini", "-p", "{prompt}"],
-                          "env": { "GEMINI_CLI_TRUST_WORKSPACE": "true" } } } }
+{
+  "agents": {
+    "codex": { "command": ["codex", "exec", "--skip-git-repo-check", "{prompt}"] },
+    "antigravity": { "command": ["agy", "-p", "--dangerously-skip-permissions", "{prompt}"] },
+    "gemini": { "command": ["gemini", "-p", "{prompt}"],
+                "env": { "GEMINI_CLI_TRUST_WORKSPACE": "true" } }
+  }
+}
 ```
+
+A delegation that only asks a question needs none of this. Point an agent at a git
+repository and `codex` is content; ask it to read rather than write and `agy` has nothing
+to request approval for.
 
 ## On Windows
 
