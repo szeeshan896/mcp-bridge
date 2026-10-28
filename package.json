@@ -54,6 +54,30 @@
     "./protocol": {
       "types": "./dist/protocol.d.ts",
       "default": "./dist/protocol.js"
+    },
+    "./connect": {
+      "types": "./dist/connect.d.ts",
+      "default": "./dist/connect.js"
+    },
+    "./tools": {
+      "types": "./dist/tools.d.ts",
+      "default": "./dist/tools.js"
+    },
+    "./registry": {
+      "types": "./dist/agents/registry.d.ts",
+      "default": "./dist/agents/registry.js"
+    },
+    "./tasks": {
+      "types": "./dist/tasks.d.ts",
+      "default": "./dist/tasks.js"
+    },
+    "./limit": {
+      "types": "./dist/limit.d.ts",
+      "default": "./dist/limit.js"
+    },
+    "./config": {
+      "types": "./dist/config.d.ts",
+      "default": "./dist/config.js"
     }
   }
 }

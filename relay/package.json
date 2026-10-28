@@ -1,0 +1,26 @@
+{
+  "name": "mcpbridge-relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Hosted relay for mcpbridge: a public MCP endpoint that forwards delegations to the user's own machine, where the AI CLIs are signed in",
+  "type": "module",
+  "engines": { "node": ">=22.5" },
+  "scripts": {
+    "build": "tsc",
+    "start": "node --no-warnings=ExperimentalWarning dist/index.js",
+    "dev": "tsx --no-warnings=ExperimentalWarning src/index.ts",
+    "test": "tsc --noEmit && node --no-warnings=ExperimentalWarning --test --import tsx \"test/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "mcpbridge": "file:..",
+    "ws": "8.22.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.5",
+    "@types/ws": "8.18.2",
+    "tsx": "4.21.0",
+    "typescript": "5.9.3"
+  }
+}
