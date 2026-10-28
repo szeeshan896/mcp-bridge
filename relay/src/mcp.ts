@@ -103,7 +103,8 @@ function buildServer(userId: string, hub: DeviceHub): McpServer {
       .string()
       .optional()
       .describe('Absolute path on the connected machine to run the agent in.'),
-    timeoutSeconds: z
+    // coerced: some clients send "120" for 120, notably one holding an older copy of this schema
+    timeoutSeconds: z.coerce
       .number()
       .int()
       .min(10)

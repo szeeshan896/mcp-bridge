@@ -13,7 +13,9 @@ function json(value: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }] };
 }
 
-const TIMEOUT_ARG = z
+// coerced: a client holding an older copy of this schema, or one that types every
+// argument as text, sends "120" -- refusing that over a type is no help to anyone
+const TIMEOUT_ARG = z.coerce
   .number()
   .int()
   .min(10)

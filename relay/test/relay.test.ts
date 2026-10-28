@@ -138,6 +138,11 @@ test('a delegation travels client -> relay -> agent -> CLI and back', async () =
   assert.equal(asked.succeeded, true);
   assert.equal(asked.output, 'round trip');
 
+  // a client with a stale schema sends the number as text; it is taken, not refused
+  const bounded = await mcp.call<{ succeeded: boolean; output: string }>('ask_agent', { agent: 'echoer', prompt: 'bounded', timeoutSeconds: '60' });
+  assert.equal(bounded.succeeded, true);
+  assert.equal(bounded.output, 'bounded');
+
   const started = await mcp.call<{ started: boolean; id: string }>('start_task', { agent: 'echoer', prompt: 'later' });
   assert.equal(started.started, true);
   let task = await mcp.call<{ status: string; result?: { output: string } }>('get_task', { id: started.id });
