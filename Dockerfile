@@ -6,11 +6,15 @@ FROM node:22-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json tsconfig.json ./
 COPY src ./src
-RUN npm ci --ignore-scripts && npm run build && npm prune --omit=dev
+RUN npm ci --ignore-scripts && npm run build
 
 COPY relay/package.json relay/package-lock.json relay/tsconfig.json ./relay/
 COPY relay/src ./relay/src
-RUN cd relay && npm ci --ignore-scripts && npm run build && npm prune --omit=dev
+# Installing the relay runs the linked parent's `prepare` (npm does that for file:
+# dependencies, --ignore-scripts or not), which needs the parent's typescript still
+# installed -- so both trees are pruned only after both are built.
+RUN cd relay && npm ci && npm run build
+RUN npm prune --omit=dev && cd relay && npm prune --omit=dev
 
 FROM node:22-alpine
 ENV NODE_ENV=production PORT=8080 HOST=0.0.0.0 DATABASE_PATH=/data/relay.sqlite
