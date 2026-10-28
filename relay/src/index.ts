@@ -8,6 +8,7 @@ import { Db } from './db.js';
 import { DeviceHub } from './hub.js';
 import { RateLimiter, sendJson } from './http.js';
 import { handleMcp } from './mcp.js';
+import { handleOAuth } from './oauth.js';
 import type { exchangeCode } from './google.js';
 import { handleWeb } from './web.js';
 
@@ -19,6 +20,8 @@ export interface RelayConfig {
   googleClientSecret?: string;
   /** replaces the call to Google in tests */
   googleExchange?: typeof exchangeCode;
+  /** replaces the fetch of an OAuth client's metadata document in tests */
+  fetchImpl?: typeof fetch;
   log?: (line: string) => void;
 }
 
@@ -41,7 +44,10 @@ export function createRelay(config: RelayConfig): Relay {
     publicUrl: config.publicUrl,
     secureCookies: config.publicUrl?.startsWith('https://') ?? false,
     loginLimiter: new RateLimiter(10, 60_000),
+    oauthLimiter: new RateLimiter(30, 60_000),
     totpUsed: new Map(),
+    fetchImpl: config.fetchImpl ?? ((input, init) => fetch(input, init)),
+    clientDocuments: new Map(),
     log,
   };
   const google = config.googleClientId && config.googleClientSecret
@@ -63,6 +69,7 @@ export function createRelay(config: RelayConfig): Relay {
         await handleMcp(req, res, { db, hub, publicUrl: config.publicUrl });
         return;
       }
+      if (await handleOAuth(req, res, ctx)) return;
       if (await handleApi(req, res, ctx)) return;
       await handleWeb(req, res, ctx, google);
     })().catch((error: unknown) => {

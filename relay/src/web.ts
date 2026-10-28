@@ -15,6 +15,14 @@ export interface GoogleConfig extends GoogleCreds {
 const OAUTH_COOKIE = 'mcpbridge_oauth';
 const OAUTH_TTL_MS = 10 * 60 * 1000;
 
+/**
+ * Where to go after signing in. Only an authorization request on this same relay is
+ * accepted, so a link cannot bounce someone through the sign-in page to another site.
+ */
+export function safeNext(value: string | null | undefined): string | null {
+  return value && value.startsWith('/oauth/authorize?') && !value.includes('\\') && !/[\r\n]/.test(value) ? value : null;
+}
+
 /** Browser-facing pages and the Google redirect dance. Everything else is the JSON API. */
 export async function handleWeb(
   req: IncomingMessage,
@@ -26,13 +34,15 @@ export async function handleWeb(
   const user = currentUser(req, ctx);
 
   switch (`${req.method} ${url.pathname}`) {
-    case 'GET /':
-      if (user) return redirect(res, '/dashboard');
-      return sendHtml(res, 200, landingPage(Boolean(google)));
+    case 'GET /': {
+      const next = safeNext(url.searchParams.get('next'));
+      if (user) return redirect(res, next ?? '/dashboard');
+      return sendHtml(res, 200, landingPage(Boolean(google), next));
+    }
 
     case 'GET /login/2fa':
       if (!pendingUser(req, ctx)) return redirect(res, '/');
-      return sendHtml(res, 200, twoFactorPage());
+      return sendHtml(res, 200, twoFactorPage(safeNext(url.searchParams.get('next'))));
 
     case 'GET /dashboard': {
       if (!user) return redirect(res, '/');
@@ -49,8 +59,9 @@ export async function handleWeb(
       if (!ctx.publicUrl) return sendHtml(res, 500, page('Not configured', '<p>PUBLIC_URL must be set for Google sign-in.</p>'));
       const state = newState();
       const { verifier, challenge } = pkcePair();
+      const next = safeNext(url.searchParams.get('next')) ?? '';
       res.setHeader('Set-Cookie', cookieHeader(
-        OAUTH_COOKIE, signSession(`${state}~${verifier}`, ctx.sessionSecret, Date.now(), OAUTH_TTL_MS),
+        OAUTH_COOKIE, signSession(`${state}~${verifier}~${encodeURIComponent(next)}`, ctx.sessionSecret, Date.now(), OAUTH_TTL_MS),
         { secure: ctx.secureCookies, maxAgeSeconds: OAUTH_TTL_MS / 1000 },
       ));
       return redirect(res, authorizationUrl(google, callbackUrl(ctx.publicUrl), state, challenge));
@@ -59,7 +70,8 @@ export async function handleWeb(
     case 'GET /auth/google/callback': {
       if (!google || !ctx.publicUrl) return redirect(res, '/');
       const stored = verifySession(parseCookies(req)[OAUTH_COOKIE], ctx.sessionSecret);
-      const [state, verifier] = (stored ?? '').split('~');
+      const [state, verifier, encodedNext = ''] = (stored ?? '').split('~');
+      const next = safeNext(decodeURIComponent(encodedNext));
       const code = url.searchParams.get('code');
       if (!state || !verifier || !code || url.searchParams.get('state') !== state) {
         return sendHtml(res, 400, page('Sign-in failed', '<p>The sign-in attempt did not match. <a href="/">Try again</a>.</p>'));
@@ -95,11 +107,11 @@ export async function handleWeb(
       if (account.totpEnabledAt !== null) {
         setPendingCookie(res, account.id, ctx);
         res.setHeader('Set-Cookie', [...([] as string[]).concat(res.getHeader('Set-Cookie') as string[]), clearOauth]);
-        return redirect(res, '/login/2fa');
+        return redirect(res, next ? `/login/2fa?next=${encodeURIComponent(next)}` : '/login/2fa');
       }
       setSessionCookie(res, account.id, ctx);
       res.setHeader('Set-Cookie', [...([] as string[]).concat(res.getHeader('Set-Cookie') as string[]), clearOauth]);
-      return redirect(res, '/dashboard');
+      return redirect(res, next ?? '/dashboard');
     }
 
     default:
@@ -134,15 +146,17 @@ async function post(path, body){const r=await fetch(path,{method:'POST',headers:
 function wire(form, path, after){form.addEventListener('submit',async e=>{e.preventDefault();const err=form.querySelector('.err');err.textContent='';const body=Object.fromEntries(new FormData(form));try{after(await post(path,body))}catch(x){err.textContent=x.message}})}
 `;
 
-function page(title: string, body: string, script = ''): string {
+export function page(title: string, body: string, script = ''): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} · mcpbridge</title><style>${STYLE}</style></head><body><main>${body}</main><script>${SCRIPT}${script}</script></body></html>`;
 }
 
-function landingPage(googleEnabled: boolean): string {
-  const google = googleEnabled ? `<a class="google" href="/auth/google">Continue with Google</a>` : '';
+function landingPage(googleEnabled: boolean, next: string | null): string {
+  const googleHref = next ? `/auth/google?next=${encodeURIComponent(next)}` : '/auth/google';
+  const google = googleEnabled ? `<a class="google" href="${esc(googleHref)}">Continue with Google</a>` : '';
+  const notice = next ? `<div class="panel"><b>A client is waiting to connect.</b> Sign in and you will be asked whether to allow it.</div>` : '';
   return page('Sign in', `
 <h1>mcpbridge</h1>
-<p class="sub">Delegate work between your AI agents from anywhere — the work runs on your own machine, where they are signed in.</p>
+<p class="sub">Delegate work between your AI agents from anywhere — the work runs on your own machine, where they are signed in.</p>${notice}
 <div class="row">
   <div class="panel"><h2 style="margin-top:0">Sign in</h2>
     <form id="login"><label>Email or phone</label><input name="username" autocomplete="username" required>
@@ -153,19 +167,27 @@ function landingPage(googleEnabled: boolean): string {
     <label>Password <span class="muted">(8+ characters)</span></label><input name="password" type="password" autocomplete="new-password" minlength="8" required>
     <div class="err"></div><button>Create account</button></form></div>
 </div>`, `
-wire(document.getElementById('login'),'/api/login',j=>{location.href=j.twoFactorRequired?'/login/2fa':'/dashboard'});
-wire(document.getElementById('signup'),'/api/signup',()=>{location.href='/dashboard'});`);
+const NEXT=${JSON.stringify(next ?? '')};
+wire(document.getElementById('login'),'/api/login',j=>{location.href=j.twoFactorRequired?('/login/2fa'+(NEXT?'?next='+encodeURIComponent(NEXT):'')):(NEXT||'/dashboard')});
+wire(document.getElementById('signup'),'/api/signup',()=>{location.href=NEXT||'/dashboard'});`);
 }
 
-function twoFactorPage(): string {
+function twoFactorPage(next: string | null): string {
   return page('2-step verification', `
 <h1>2-step verification</h1><p class="sub">Enter the 6-digit code from your authenticator app, or one of your recovery codes.</p>
 <div class="panel"><form id="f"><label>Code</label><input name="code" inputmode="numeric" autocomplete="one-time-code" autofocus required>
 <div class="err"></div><button>Continue</button></form></div>`, `
-wire(document.getElementById('f'),'/api/login/2fa',()=>{location.href='/dashboard'});`);
+wire(document.getElementById('f'),'/api/login/2fa',()=>{location.href=${JSON.stringify(next ?? '/dashboard')}});`);
 }
 
 type Summary = ReturnType<typeof accountSummary>;
+
+function connectedApps(me: Summary): string {
+  if (me.connectedApps.length === 0) return `<p class="muted">Nothing has connected through sign-in yet.</p>`;
+  return `<table><tr><th>App</th><th>Connected</th><th>Last used</th><th></th></tr>${me.connectedApps
+    .map((a) => `<tr><td><b>${esc(a.name)}</b></td><td class="muted">${new Date(a.createdAt).toLocaleString()}</td><td class="muted">${a.lastUsedAt ? new Date(a.lastUsedAt).toLocaleString() : 'not yet'}</td><td><button class="danger" style="margin:0;padding:4px 10px" data-revoke="${esc(a.id)}">Disconnect</button></td></tr>`)
+    .join('')}</table>`;
+}
 
 function dashboardPage(me: Summary, base: string, googleEnabled: boolean): string {
   const host = base.replace(/\/$/, '');
@@ -197,14 +219,25 @@ function dashboardPage(me: Summary, base: string, googleEnabled: boolean): strin
   const snippets = `
 <h2>Connect your machine</h2><p class="muted">Run this where your AI CLIs are signed in. It stays running and reconnects on its own.</p>
 <pre>npx -y mcpbridge connect --relay ${esc(host)} --token <span data-fill="agent">&lt;agent token&gt;</span></pre>
+<h2>Connect claude.ai — web, desktop app and phone</h2>
+<p class="muted">No token to paste: claude.ai signs in here and asks you to allow it.</p>
+<ol>
+  <li>In claude.ai open <b>Customize → Connectors</b> and click <b>Add custom connector</b>.</li>
+  <li>Name it <b>mcpbridge</b>, and for the MCP server URL enter <code>${esc(host)}/mcp</code>. Leave the OAuth client fields empty (or choose <i>Use Claude's published identity</i> / <i>Register automatically</i> if asked).</li>
+  <li>Click <b>Add</b>, then <b>Connect</b>. You land back here, signed in, with an <i>Allow</i> button.</li>
+  <li>In any chat open the <b>+</b> menu → <b>Connectors</b> and switch mcpbridge on. The same connector works in the Claude desktop app and on the phone once you are signed in there.</li>
+</ol>
+<div class="panel"><h2 style="margin-top:0">Connected apps</h2>${connectedApps(me)}</div>
 <h2>Connect your clients</h2>
-<p class="muted">Claude Code — from any folder:</p>
+<p class="muted">Claude Code — from any folder, then run <code>/mcp</code> inside Claude Code to sign in:</p>
+<pre>claude mcp add -s user --transport http mcpbridge ${esc(host)}/mcp</pre>
+<p class="muted">Or with a client token instead of signing in:</p>
 <pre>claude mcp add -s user --transport http mcpbridge ${esc(host)}/mcp --header "Authorization: Bearer <span data-fill="client">&lt;client token&gt;</span>"</pre>
 <p class="muted">Claude Desktop — add to <code>claude_desktop_config.json</code>:</p>
 <pre>{ "mcpServers": { "mcpbridge": { "command": "npx", "args": ["-y", "mcp-remote", "${esc(host)}/mcp", "--header", "Authorization: Bearer <span data-fill="client">&lt;client token&gt;</span>"] } } }</pre>
 <p class="muted">Cursor — <code>.cursor/mcp.json</code>:</p>
 <pre>{ "mcpServers": { "mcpbridge": { "url": "${esc(host)}/mcp", "headers": { "Authorization": "Bearer <span data-fill="client">&lt;client token&gt;</span>" } } } }</pre>
-<p class="muted">claude.ai (web and phone) needs OAuth on the connector side; that is the next thing this relay will support.</p>`;
+`;
 
   return page('Dashboard', `
 <h1>mcpbridge</h1><div class="sub">${esc(me.username)}${me.googleLinked ? ' · Google linked' : ''}${googleEnabled && !me.googleLinked ? ' · <a href="/auth/google">link Google</a>' : ''} · <form method="post" action="/logout" style="display:inline"><button class="secondary" style="margin:0;padding:2px 8px">Sign out</button></form></div>
@@ -212,6 +245,7 @@ function dashboardPage(me: Summary, base: string, googleEnabled: boolean): strin
 <div class="row">${tokenRow('agent', 'Agent token', 'Lets a machine serve your account. Keep it on that machine only.')}${tokenRow('client', 'Client token', 'Lets a client delegate as you. Put it in Claude Code, Desktop or Cursor.')}</div>
 <div class="panel"><h2 style="margin-top:0">2-step verification</h2>${twoFactor}</div>
 ${snippets}`, `
+for(const b of document.querySelectorAll('[data-revoke]'))b.addEventListener('click',async()=>{if(!confirm('Disconnect this app? It will have to sign in again.'))return;try{await post('/api/oauth/revoke',{id:b.dataset.revoke});location.reload()}catch(x){alert(x.message)}});
 for(const b of document.querySelectorAll('[data-token]'))b.addEventListener('click',async()=>{const k=b.dataset.token;try{const j=await post('/api/tokens/'+k);document.getElementById('tok-'+k+'-value').textContent=j.token;document.getElementById('tok-'+k).style.display='block';for(const s of document.querySelectorAll('[data-fill="'+k+'"]'))s.textContent=j.token}catch(x){alert(x.message)}});
 const setup=document.getElementById('setup');if(setup)setup.addEventListener('click',async()=>{try{const j=await post('/api/2fa/setup');document.getElementById('qr').innerHTML=j.qrSvg;document.getElementById('secret').textContent=j.secret;document.getElementById('enrol').style.display='block';setup.style.display='none'}catch(x){alert(x.message)}});
 const enable=document.getElementById('enable');if(enable)wire(enable,'/api/2fa/enable',j=>{const c=document.getElementById('codes');c.textContent='Recovery codes (shown once):\\n'+j.recoveryCodes.join('\\n');c.style.display='block';enable.style.display='none'});

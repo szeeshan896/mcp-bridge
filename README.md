@@ -208,9 +208,11 @@ server needs no keys.
 The relay itself lives in [`relay/`](relay/README.md): accounts (email or phone, password or
 Google), 2-step verification with an authenticator app, two tokens per account stored as
 hashes, a dashboard that generates the exact lines to paste into each client, and a
-`Dockerfile` that deploys to Fly, Railway or any VPS. Clients that send a header work
-today; claude.ai registers connectors through OAuth, which is the next thing the relay
-will add.
+`Dockerfile` that deploys to Fly, Railway or any VPS. claude.ai — web, desktop app and
+phone — connects to it as a custom connector through OAuth: you enter the relay's URL,
+sign in, click *Allow*, and nothing is pasted anywhere. Claude Code signs in the same way;
+clients that take a fixed header (Claude Desktop via `mcp-remote`, Cursor) use a client
+token from the dashboard instead.
 
 ## Reaching a model that has no CLI
 
@@ -352,7 +354,7 @@ with the path to set by hand, so an unrecognised one never produces a wrong comm
 
 ```bash
 npm install
-npm test          # typecheck + 67 tests
+npm test          # typecheck + 85 tests
 npm run build
 npm start         # stdio, from source
 ```

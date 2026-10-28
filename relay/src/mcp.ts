@@ -7,7 +7,8 @@ import { z } from 'zod';
 import { bearerFrom, hashToken, tokenKind } from './auth.js';
 import type { Db } from './db.js';
 import { DeviceOfflineError, type DeviceHub } from './hub.js';
-import { sendJson } from './http.js';
+import { baseUrl, sendJson } from './http.js';
+import { resolveAccessToken, unauthorizedHeader } from './oauth.js';
 
 export interface McpDeps {
   db: Db;
@@ -24,22 +25,39 @@ function json(value: unknown) {
 }
 
 /**
- * The public MCP endpoint. A client token identifies the account; every tool is forwarded
- * to that account's connected device, which does the work. Nothing runs here.
+ * The account behind a bearer token: a client token pasted from the dashboard, or an access
+ * token issued by the OAuth flow. Both are hashes in the database; neither is ever stored.
+ */
+function authenticate(token: string | null, db: Db): string | null {
+  if (!token) return null;
+  if (tokenKind(token) === 'client') {
+    const record = db.findToken(hashToken(token), 'client');
+    if (!record) return null;
+    db.touchToken(record.hash);
+    return record.userId;
+  }
+  return resolveAccessToken(token, db)?.userId ?? null;
+}
+
+/**
+ * The public MCP endpoint. A token identifies the account; every tool is forwarded to that
+ * account's connected device, which does the work. Nothing runs here.
  */
 export async function handleMcp(req: IncomingMessage, res: ServerResponse, deps: McpDeps): Promise<void> {
   const token = bearerFrom(req.headers.authorization);
-  const record = token && tokenKind(token) === 'client' ? deps.db.findToken(hashToken(token), 'client') : null;
-  if (!record) {
-    res.setHeader('WWW-Authenticate', 'Bearer realm="mcpbridge"');
+  const userId = authenticate(token, deps.db);
+  if (!userId) {
+    // the header is what tells claude.ai and Claude Code where to sign in; a 401 is required
+    res.setHeader('WWW-Authenticate', unauthorizedHeader(baseUrl(req, deps.publicUrl), token !== null));
     sendJson(res, 401, {
-      error: 'a client token is required: Authorization: Bearer mbc_... — generate one in the dashboard',
+      error: token
+        ? 'the token is expired, revoked or unknown — sign in again, or generate a new client token in the dashboard'
+        : 'sign in through OAuth, or send a client token: Authorization: Bearer mbc_... (generate one in the dashboard)',
     });
     return;
   }
-  deps.db.touchToken(record.hash);
 
-  const server = buildServer(record.userId, deps.hub);
+  const server = buildServer(userId, deps.hub);
   const publicHost = deps.publicUrl ? new URL(deps.publicUrl).host : undefined;
   const transport = new StreamableHTTPServerTransport({
     ...(publicHost

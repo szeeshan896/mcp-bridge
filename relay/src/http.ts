@@ -71,6 +71,14 @@ export function cookieHeader(name: string, value: string, options: CookieOptions
   return parts.join('; ');
 }
 
+/**
+ * The origin clients use for this relay, with no trailing slash: the configured public URL
+ * when hosted, the Host header when running locally or under test.
+ */
+export function baseUrl(req: IncomingMessage, publicUrl: string | undefined): string {
+  return (publicUrl ?? `http://${req.headers.host ?? 'localhost'}`).replace(/\/+$/, '');
+}
+
 /** The caller's address, honouring the first hop of X-Forwarded-For behind a proxy. */
 export function clientAddress(req: IncomingMessage): string {
   const forwarded = req.headers['x-forwarded-for'];

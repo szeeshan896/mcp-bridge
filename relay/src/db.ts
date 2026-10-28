@@ -19,6 +19,42 @@ export interface User {
   createdAt: number;
 }
 
+/** A client that registered itself (RFC 7591); a metadata-document client is never stored. */
+export interface OAuthClient {
+  id: string;
+  secretHash: string | null;
+  name: string;
+  redirectUris: string[];
+  createdAt: number;
+}
+
+export interface OAuthCode {
+  hash: string;
+  userId: string;
+  clientId: string;
+  clientName: string;
+  redirectUri: string;
+  codeChallenge: string;
+  scope: string;
+  expiresAt: number;
+}
+
+/** One approval by one user for one client: the pair of tokens that came out of it. */
+export interface OAuthGrant {
+  id: string;
+  userId: string;
+  clientId: string;
+  clientName: string;
+  scope: string;
+  accessHash: string;
+  refreshHash: string;
+  accessExpiresAt: number;
+  refreshExpiresAt: number;
+  createdAt: number;
+  lastUsedAt: number | null;
+  revokedAt: number | null;
+}
+
 export interface TokenRecord {
   userId: string;
   kind: TokenKind;
@@ -69,6 +105,37 @@ export class Db {
         user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         hash TEXT NOT NULL UNIQUE,
         used_at INTEGER
+      );
+      CREATE TABLE IF NOT EXISTS oauth_clients (
+        id TEXT PRIMARY KEY,
+        secret_hash TEXT,
+        name TEXT NOT NULL,
+        redirect_uris TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS oauth_codes (
+        hash TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        client_id TEXT NOT NULL,
+        client_name TEXT NOT NULL,
+        redirect_uri TEXT NOT NULL,
+        code_challenge TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        expires_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS oauth_grants (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        client_id TEXT NOT NULL,
+        client_name TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        access_hash TEXT NOT NULL UNIQUE,
+        refresh_hash TEXT NOT NULL UNIQUE,
+        access_expires_at INTEGER NOT NULL,
+        refresh_expires_at INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        last_used_at INTEGER,
+        revoked_at INTEGER
       );
     `);
   }
@@ -181,8 +248,127 @@ export class Db {
     this.db.prepare('UPDATE tokens SET last_used_at = ? WHERE hash = ?').run(Date.now(), hash);
   }
 
+  // ---- oauth ---------------------------------------------------------------
+
+  createOAuthClient(client: OAuthClient): void {
+    this.db
+      .prepare('INSERT INTO oauth_clients (id, secret_hash, name, redirect_uris, created_at) VALUES (?, ?, ?, ?, ?)')
+      .run(client.id, client.secretHash, client.name, JSON.stringify(client.redirectUris), client.createdAt);
+  }
+
+  findOAuthClient(id: string): OAuthClient | null {
+    const r = this.db.prepare('SELECT * FROM oauth_clients WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+    if (!r) return null;
+    return {
+      id: String(r['id']),
+      secretHash: r['secret_hash'] == null ? null : String(r['secret_hash']),
+      name: String(r['name']),
+      redirectUris: JSON.parse(String(r['redirect_uris'])) as string[],
+      createdAt: Number(r['created_at']),
+    };
+  }
+
+  createOAuthCode(code: OAuthCode): void {
+    this.db
+      .prepare(
+        `INSERT INTO oauth_codes (hash, user_id, client_id, client_name, redirect_uri, code_challenge, scope, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(code.hash, code.userId, code.clientId, code.clientName, code.redirectUri, code.codeChallenge, code.scope, code.expiresAt);
+  }
+
+  /** Reads and deletes in one step, so a code can be exchanged exactly once. */
+  consumeOAuthCode(hash: string): OAuthCode | null {
+    const r = this.db.prepare('DELETE FROM oauth_codes WHERE hash = ? RETURNING *').get(hash) as Record<string, unknown> | undefined;
+    if (!r) return null;
+    return {
+      hash: String(r['hash']),
+      userId: String(r['user_id']),
+      clientId: String(r['client_id']),
+      clientName: String(r['client_name']),
+      redirectUri: String(r['redirect_uri']),
+      codeChallenge: String(r['code_challenge']),
+      scope: String(r['scope']),
+      expiresAt: Number(r['expires_at']),
+    };
+  }
+
+  createOAuthGrant(grant: OAuthGrant): void {
+    this.db
+      .prepare(
+        `INSERT INTO oauth_grants (id, user_id, client_id, client_name, scope, access_hash, refresh_hash,
+           access_expires_at, refresh_expires_at, created_at, last_used_at, revoked_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`,
+      )
+      .run(
+        grant.id, grant.userId, grant.clientId, grant.clientName, grant.scope, grant.accessHash, grant.refreshHash,
+        grant.accessExpiresAt, grant.refreshExpiresAt, grant.createdAt,
+      );
+  }
+
+  findOAuthGrantByAccess(hash: string): OAuthGrant | null {
+    return this.rowToGrant(this.db.prepare('SELECT * FROM oauth_grants WHERE access_hash = ?').get(hash));
+  }
+
+  findOAuthGrantByRefresh(hash: string): OAuthGrant | null {
+    return this.rowToGrant(this.db.prepare('SELECT * FROM oauth_grants WHERE refresh_hash = ?').get(hash));
+  }
+
+  /** A refresh replaces both tokens; the old refresh token stops working at once. */
+  rotateOAuthGrant(id: string, next: { accessHash: string; refreshHash: string; accessExpiresAt: number; refreshExpiresAt: number }): void {
+    this.db
+      .prepare('UPDATE oauth_grants SET access_hash = ?, refresh_hash = ?, access_expires_at = ?, refresh_expires_at = ? WHERE id = ?')
+      .run(next.accessHash, next.refreshHash, next.accessExpiresAt, next.refreshExpiresAt, id);
+  }
+
+  touchOAuthGrant(id: string): void {
+    this.db.prepare('UPDATE oauth_grants SET last_used_at = ? WHERE id = ?').run(Date.now(), id);
+  }
+
+  /** Revokes one grant, only if it belongs to that user; true if a row changed. */
+  revokeOAuthGrant(id: string, userId: string): boolean {
+    const result = this.db
+      .prepare('UPDATE oauth_grants SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL')
+      .run(Date.now(), id, userId);
+    return Number(result.changes) === 1;
+  }
+
+  /** The live grants for the dashboard, newest first. */
+  listOAuthGrants(userId: string): OAuthGrant[] {
+    const rows = this.db
+      .prepare('SELECT * FROM oauth_grants WHERE user_id = ? AND revoked_at IS NULL AND refresh_expires_at > ? ORDER BY created_at DESC')
+      .all(userId, Date.now());
+    return rows.map((r) => this.rowToGrant(r)!);
+  }
+
+  /** Expired codes and long-dead grants have nothing left to say. */
+  pruneOAuth(now = Date.now()): void {
+    this.db.prepare('DELETE FROM oauth_codes WHERE expires_at < ?').run(now);
+    this.db.prepare('DELETE FROM oauth_grants WHERE refresh_expires_at < ? OR revoked_at < ?').run(now, now - 30 * 24 * 60 * 60 * 1000);
+  }
+
   close(): void {
     this.db.close();
+  }
+
+  private rowToGrant(row: unknown): OAuthGrant | null {
+    const r = row as Record<string, unknown> | undefined;
+    if (!r) return null;
+    const num = (v: unknown) => (v == null ? null : Number(v));
+    return {
+      id: String(r['id']),
+      userId: String(r['user_id']),
+      clientId: String(r['client_id']),
+      clientName: String(r['client_name']),
+      scope: String(r['scope']),
+      accessHash: String(r['access_hash']),
+      refreshHash: String(r['refresh_hash']),
+      accessExpiresAt: Number(r['access_expires_at']),
+      refreshExpiresAt: Number(r['refresh_expires_at']),
+      createdAt: Number(r['created_at']),
+      lastUsedAt: num(r['last_used_at']),
+      revokedAt: num(r['revoked_at']),
+    };
   }
 
   private rowToUser(row: unknown): User | null {

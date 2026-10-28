@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { bearerFrom, hashPassword, hashToken, newId, newToken, signSession, verifyPassword, verifySession } from './auth.js';
 import type { Db, TokenKind, User } from './db.js';
 import type { DeviceHub } from './hub.js';
+import type { ResolvedClient } from './oauth.js';
 import { clientAddress, cookieHeader, originAllowed, parseCookies, parseFields, readBody, sendJson, type RateLimiter } from './http.js';
 import { normalizeUsername } from './identity.js';
 import { sendToAgent } from './agentSocket.js';
@@ -21,8 +22,14 @@ export interface ApiContext {
   publicUrl: string | undefined;
   secureCookies: boolean;
   loginLimiter: RateLimiter;
+  /** blunts junk OAuth client registrations, which anyone may make */
+  oauthLimiter: RateLimiter;
   /** the last TOTP counter each user passed with, so a code cannot be replayed inside its window */
   totpUsed: Map<string, number>;
+  /** fetches an OAuth client's metadata document; replaced in tests */
+  fetchImpl: typeof fetch;
+  /** metadata documents already fetched, by client_id */
+  clientDocuments: Map<string, { client: ResolvedClient; expiresAt: number }>;
   log: (line: string) => void;
 }
 
@@ -90,6 +97,10 @@ export function accountSummary(user: User, ctx: ApiContext) {
       agent: ctx.db.tokenInfo(user.id, 'agent'),
       client: ctx.db.tokenInfo(user.id, 'client'),
     },
+    // clients that connected through OAuth -- claude.ai, Claude Code and the like
+    connectedApps: ctx.db.listOAuthGrants(user.id).map((g) => ({
+      id: g.id, name: g.clientName, createdAt: g.createdAt, lastUsedAt: g.lastUsedAt,
+    })),
   };
 }
 
@@ -235,6 +246,15 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, ctx: 
       const kind: TokenKind = url.pathname.endsWith('agent') ? 'agent' : 'client';
       const token = rotateToken(user, kind, ctx);
       sendJson(res, 200, { kind, token, note: 'shown once — store it now; regenerating replaces it' });
+      return true;
+    }
+
+    case 'POST /api/oauth/revoke': {
+      const user = currentUser(req, ctx);
+      if (!user) return bad(res, 'not signed in', 401);
+      const id = fields['id'] ?? '';
+      if (!ctx.db.revokeOAuthGrant(id, user.id)) return bad(res, 'no such connected app', 404);
+      sendJson(res, 200, { revoked: true });
       return true;
     }
 
