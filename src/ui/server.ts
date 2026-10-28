@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { dirname } from 'node:path';
 
 import { HealthStore } from '../agents/health.js';
+import { permissionsFor } from '../agents/permissions.js';
 import { AgentRegistry } from '../agents/registry.js';
 import { DEFAULT_CONFIG, configPath, loadConfig, type AgentConfig } from '../config.js';
 import { connectToRelay } from '../connect.js';
@@ -183,10 +184,13 @@ export async function startUi(options: UiOptions): Promise<UiServer> {
       agents: probed.map((s) => {
         const own = mine[s.name];
         const keyEnv = own && own.type === 'openai' ? own.apiKeyEnv : undefined;
+        const effective = own ?? DEFAULT_CONFIG.agents[s.name];
+        const cli = effective && effective.type !== 'openai' && effective.type !== 'ollama' ? permissionsFor(effective) : null;
         return {
           ...s,
           origin: own ? (s.name in DEFAULT_CONFIG.agents ? 'override' : 'yours') : 'built-in',
-          config: own ?? null,
+          config: own ?? (effective ?? null),
+          permissions: cli ? { supports: cli.supports, note: cli.note } : null,
           key: keyEnv ? { env: keyEnv, saved: maskSecret(secrets.keys[keyEnv]), inEnvironment: Boolean(process.env[keyEnv]) } : null,
         };
       }),
@@ -224,8 +228,19 @@ export async function startUi(options: UiOptions): Promise<UiServer> {
     } else if (kind === 'cli') {
       const command = Array.isArray(body['command']) ? body['command'].map(String).filter(Boolean) : [];
       const promptVia = body['promptVia'] === 'stdin' ? 'stdin' : 'argv';
+      const given = (body['allow'] ?? {}) as Record<string, unknown>;
+      const allow = {
+        ...(given['edits'] === true ? { edits: true } : {}),
+        ...(given['commands'] === true ? { commands: true } : {}),
+        ...(given['trustDirectory'] === true ? { trustDirectory: true } : {}),
+      };
+      // kept from the file: hand-written fields this form does not show, such as env
+      const previous = (fileAgents()[name] ?? {}) as Record<string, unknown>;
       agent = {
+        ...(previous['env'] ? { env: previous['env'] as Record<string, string> } : {}),
+        ...(previous['capabilities'] ? { capabilities: previous['capabilities'] as { writesFiles?: boolean; runsCommands?: boolean } } : {}),
         command, ...(promptVia === 'stdin' ? { promptVia } : {}),
+        ...(Object.keys(allow).length ? { allow } : {}),
         ...(description ? { description } : {}), ...(timeoutMs ? { timeoutMs } : {}),
       };
     } else if (kind === 'ollama') {
@@ -255,6 +270,8 @@ export async function startUi(options: UiOptions): Promise<UiServer> {
       // a key typed here replaces whatever the variable held at startup
       process.env[keyEnv] = apiKey;
     }
+    // what was learned about the old configuration may not hold for the new one
+    health.forget(name);
     reload();
     return { saved: name };
   };
@@ -276,7 +293,8 @@ export async function startUi(options: UiOptions): Promise<UiServer> {
     const agent = context.registry.find(name);
     if (!agent) throw new Error(`no agent named "${name}"`);
     const prompt = typeof body['prompt'] === 'string' && body['prompt'].trim() ? body['prompt'].trim() : TEST_PROMPT;
-    const result = await context.limit.run(() => agent.run(prompt, {}));
+    // the owner pressing Test is the explicit retry a remembered failure waits for
+    const result = await context.limit.run(() => agent.run(prompt, { force: true }));
     // what the test learned belongs in the next listing, not one cached from before it
     statusCache = undefined;
     return result;

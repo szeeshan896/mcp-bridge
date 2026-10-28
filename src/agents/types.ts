@@ -22,6 +22,10 @@ export interface RunOptions {
   cwd?: string;
   /** the caller's own bound; only ever shortens the agent's configured timeout */
   timeoutMs?: number;
+  /** told each piece of output as it arrives, so a running task can show progress */
+  onOutput?: (chunk: string) => void;
+  /** run even though an earlier call hit a durable failure; for an explicit retry */
+  force?: boolean;
 }
 
 /** The configured limit, lowered to the caller's when the caller asked for less. */
@@ -45,6 +49,12 @@ export interface Agent {
    * context instead of assuming otherwise.
    */
   readonly readsFiles: boolean;
+  /** whether, as configured, it may create or change files in the working directory */
+  readonly writesFiles: boolean;
+  /** whether, as configured, it may run shell commands such as tests or builds */
+  readonly runsCommands: boolean;
+  /** the longest one call may run before it is stopped */
+  readonly timeoutMs: number;
   /** whether it can actually be used right now */
   probe(): Promise<{ available: boolean; detail: string }>;
   run(prompt: string, options: RunOptions): Promise<AgentResult>;

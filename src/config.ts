@@ -19,6 +19,15 @@ export interface CliAgentConfig {
   cwd?: string;
   /** extra environment for the child, merged over this process's own */
   env?: Record<string, string>;
+  /**
+   * What this agent may do unattended. Off by default: a client that can call the bridge
+   * should not be able to make an agent change files or run commands unless the owner
+   * chose that. For the CLIs the bridge knows (claude, codex, grok, gemini) these become
+   * that CLI's own flags.
+   */
+  allow?: { edits?: boolean; commands?: boolean; trustDirectory?: boolean };
+  /** for a CLI the bridge does not know: what its configured command lets it do */
+  capabilities?: { writesFiles?: boolean; runsCommands?: boolean };
 }
 
 export interface OllamaAgentConfig {

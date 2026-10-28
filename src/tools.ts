@@ -46,8 +46,16 @@ export async function executeTool(
       const parsed = delegation(args);
       const target = registry.find(parsed.agent);
       if (!target) return { started: false, ...unknownAgent(parsed.agent, registry) };
-      const task = tasks.start(target, parsed.prompt, runOptions(parsed));
-      return { started: true, id: task.id, agent: task.agent, status: task.status };
+      // said when the task is accepted, not only in the result minutes later
+      const ignored = parsed.workingDirectory && !target.readsFiles
+        ? `workingDirectory will be ignored: ${target.name} cannot read files, so it sees only the prompt.`
+        : undefined;
+      const task = tasks.start(target, parsed.prompt, runOptions(parsed), ignored);
+      return {
+        started: true, id: task.id, agent: task.agent, status: task.status,
+        ...(task.queuePosition !== undefined ? { queuePosition: task.queuePosition } : {}),
+        ...(ignored ? { notes: ignored } : {}),
+      };
     }
 
     case 'get_task': {

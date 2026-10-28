@@ -6,6 +6,7 @@ import { delimiter, dirname, join, sep } from 'node:path';
 import type { CliAgentConfig } from '../config.js';
 import { type ShimTarget, parseShimTarget } from './shim.js';
 import { cleanDiagnostics, troubleOnSuccess } from './outcome.js';
+import { type Permissions, permissionsFor } from './permissions.js';
 import { type Agent, type AgentResult, type RunOptions, effectiveTimeout, failed, truncate } from './types.js';
 
 export const PROMPT_PLACEHOLDER = '{prompt}';
@@ -21,6 +22,7 @@ const QUIET_ENV = { NO_COLOR: '1', FORCE_COLOR: '0', TERM: 'dumb' };
 export class CliAgent implements Agent {
   readonly requires: string;
   readonly readsFiles = true;
+  readonly permissions: Permissions;
 
   constructor(
     readonly name: string,
@@ -36,6 +38,19 @@ export class CliAgent implements Agent {
       );
     }
     this.requires = config.command[0]!;
+    this.permissions = permissionsFor(config);
+  }
+
+  get writesFiles(): boolean {
+    return this.permissions.writesFiles;
+  }
+
+  get runsCommands(): boolean {
+    return this.permissions.runsCommands;
+  }
+
+  get timeoutMs(): number {
+    return this.config.timeoutMs ?? 300_000;
   }
 
   private get promptVia(): 'argv' | 'stdin' {
@@ -86,9 +101,11 @@ export class CliAgent implements Agent {
       : this.config.command.map((part) => part.replaceAll(PROMPT_PLACEHOLDER, prompt));
     // the shim's own argv[0] is replaced by what it would have run, keeping the agent's
     // own flags after it
-    const argv = replacement
-      ? [replacement.command, ...replacement.prefix, ...configured.slice(1)]
-      : configured;
+    const argv = [
+      ...(replacement ? [replacement.command, ...replacement.prefix, ...configured.slice(1)] : configured),
+      // what the owner allowed it, in this CLI's own flags
+      ...this.permissions.args,
+    ];
     const [command, ...args] = argv as [string, ...string[]];
     const timeoutMs = effectiveTimeout(this.config.timeoutMs, options);
     const cwd = options.cwd ?? this.config.cwd;
@@ -99,7 +116,7 @@ export class CliAgent implements Agent {
       try {
         child = spawn(command, args, {
           cwd,
-          env: { ...process.env, ...QUIET_ENV, ...(this.config.env ?? {}) },
+          env: { ...process.env, ...QUIET_ENV, ...this.permissions.env, ...(this.config.env ?? {}) },
           // own process group, so a timeout can take the whole tree down: killing just the
           // child leaves grandchildren alive, and an orphan holding the pipe keeps us
           // waiting for its lifetime
@@ -123,7 +140,11 @@ export class CliAgent implements Agent {
 
       // stdout and stderr are consumed as they arrive, so neither pipe can fill and stall
       // the child while we are busy with the other
-      child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8'); });
+      child.stdout?.on('data', (chunk: Buffer) => {
+        const text = chunk.toString('utf8');
+        stdout += text;
+        options.onOutput?.(text);
+      });
       child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8'); });
 
       if (viaStdin && child.stdin) {
@@ -133,9 +154,18 @@ export class CliAgent implements Agent {
 
       const timer = setTimeout(() => {
         killTree(child.pid);
-        finish(failed(this.name,
-          `${this.name} did not finish within ${timeoutMs}ms and was stopped. Try a smaller task.`,
-          Date.now() - started, true));
+        // what it had written by then is often most of an answer; throwing it away left a
+        // caller with nothing after five minutes of real work
+        const partial = truncate(stdout, this.maxOutputChars);
+        finish({
+          ...failed(this.name,
+            `${this.name} did not finish within ${Math.round(timeoutMs / 1000)} s and was stopped.` +
+              (partial.text ? ' What it had written by then is in "output"; it is incomplete.' : ' It had written nothing yet.') +
+              ' Give it a smaller task, or a longer timeout in its config.',
+            Date.now() - started, true),
+          output: partial.text,
+          outputTruncated: partial.truncated,
+        });
       }, timeoutMs);
 
       child.on('error', (error) => {

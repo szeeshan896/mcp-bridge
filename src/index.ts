@@ -99,6 +99,9 @@ async function main(): Promise<void> {
       // only meaningful for an agent that can actually be used
       if (status.available && !status.readsFiles) {
         process.stdout.write(`${''.padEnd(13)}cannot read files — inline context in the prompt\n`);
+      } else if (status.available) {
+        const may = [status.writesFiles ? 'edit files' : '', status.runsCommands ? 'run commands' : ''].filter(Boolean);
+        process.stdout.write(`${''.padEnd(13)}${may.length ? `may ${may.join(' and ')}` : 'read-only: reads and reports, cannot edit or run anything'}\n`);
       }
     }
     return;

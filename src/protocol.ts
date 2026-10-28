@@ -18,6 +18,9 @@ export const AgentStatusSchema = z.object({
   detail: z.string(),
   // optional, so an older agent's hello still parses
   status: z.string().optional(),
+  writesFiles: z.boolean().optional(),
+  runsCommands: z.boolean().optional(),
+  timeoutSeconds: z.number().optional(),
   lastError: z.string().optional(),
   lastErrorAt: z.string().optional(),
   retryAt: z.string().optional(),

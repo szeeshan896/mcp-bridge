@@ -4,8 +4,8 @@ import { CliAgent } from './cli.js';
 import { OllamaAgent } from './ollama.js';
 import { OpenAiAgent } from './openai.js';
 import { HealthStore, type AgentState } from './health.js';
-import { classifyFailure, selfReportedFailure } from './outcome.js';
-import type { Agent, AgentResult } from './types.js';
+import { classifyFailure, onlyAnnounced, selfReportedFailure } from './outcome.js';
+import { type Agent, type AgentResult, failed } from './types.js';
 
 export interface AgentStatus {
   name: string;
@@ -26,6 +26,15 @@ export interface AgentStatus {
   status: AgentState;
   /** whether pointing it at a directory actually lets it read those files */
   readsFiles: boolean;
+  /**
+   * Whether, as configured, it may change files and run commands. Both are off unless the
+   * owner allowed them for this agent; a task that needs either belongs with an agent
+   * that has it, or should ask only for a reading and a report.
+   */
+  writesFiles: boolean;
+  runsCommands: boolean;
+  /** the longest one call may run before it is stopped */
+  timeoutSeconds: number;
   detail: string;
   /** the most recent failed call, if any, and when; ISO timestamps */
   lastError?: string;
@@ -84,6 +93,9 @@ export class AgentRegistry {
           available: status === 'ready',
           status,
           readsFiles: agent.readsFiles,
+          writesFiles: agent.writesFiles,
+          runsCommands: agent.runsCommands,
+          timeoutSeconds: Math.round(agent.timeoutMs / 1000),
           detail: remembered ?? probe.detail,
           calls: health?.calls ?? 0,
         };
@@ -119,27 +131,56 @@ function tracked(agent: Agent, health: HealthStore): Agent {
     get description() { return agent.description; },
     get requires() { return agent.requires; },
     get readsFiles() { return agent.readsFiles; },
+    get writesFiles() { return agent.writesFiles; },
+    get runsCommands() { return agent.runsCommands; },
+    get timeoutMs() { return agent.timeoutMs; },
     probe: () => agent.probe(),
     run: async (prompt, options) => {
+      // a used-up quota or a failed sign-in fails the same way next time: four tasks
+      // started together on one exhausted account should cost one failure, not four
+      const known = health.get(agent.name)?.lastFailure;
+      const state = health.state(agent.name, true);
+      if (!options.force && known && state !== 'ready') {
+        return failed(agent.name,
+          `not started: ${agent.name} hit "${STATE_TEXT[state]}" on a call at ${new Date(known.at).toISOString()} ` +
+          `(${known.message})${known.retryAt ? `, and said to try again ${known.retryAt}` : ''}. ` +
+          'Choose another agent; this one is tried again once that clears, or when its owner retests it.');
+      }
       const result = await agent.run(prompt, options);
-      const judged = judge(agent.name, result);
+      const judged = judge(agent, result);
       health.record(agent.name, judged);
       return judged;
     },
   };
 }
 
-function judge(name: string, result: AgentResult): AgentResult {
+function judge(agent: Agent, result: AgentResult): AgentResult {
+  const name = agent.name;
   if (result.succeeded) {
     const admitted = selfReportedFailure(result.output);
-    if (!admitted) return result;
-    return {
-      ...result,
-      succeeded: false,
-      diagnostics:
-        `${name} exited normally, but its answer says it could not do the task: "${admitted}" ` +
-        'Treat "output" as its explanation, not as a result.',
-    };
+    if (admitted) {
+      return {
+        ...result,
+        succeeded: false,
+        diagnostics:
+          `${name} exited normally, but its answer says it could not do the task: "${admitted}" ` +
+          'Treat "output" as its explanation, not as a result.',
+      };
+    }
+    if (onlyAnnounced(result.output)) {
+      const limited = !agent.writesFiles || !agent.runsCommands;
+      return {
+        ...result,
+        succeeded: false,
+        diagnostics:
+          `${name} exited normally, but its whole answer only says what it was about to do. ` +
+          (limited
+            ? 'It probably stopped at a step it was not allowed to take -- it is not allowed to ' +
+              `${[!agent.writesFiles ? 'change files' : '', !agent.runsCommands ? 'run commands' : ''].filter(Boolean).join(' or ')} ` +
+              'here. Ask it only to read and report, or have its owner allow that step for this agent.'
+            : 'Ask again, or give it a smaller task.'),
+      };
+    }
   }
   if (classifyFailure(result.diagnostics).kind === 'trust') {
     return {

@@ -57,6 +57,16 @@ if (mode === 'echo') {
 } else if (mode === 'untrusted') {
   process.stderr.write('Gemini CLI is not running in a trusted directory. To proceed, either use `--skip-trust`, set the `GEMINI_CLI_TRUST_WORKSPACE=true` environment variable, or trust this directory in interactive mode.\n');
   process.exit(55);
+} else if (mode === 'args') {
+  // what the bridge added to the command, and the environment it set
+  process.stdout.write(JSON.stringify({ args: process.argv.slice(3), trust: process.env.GEMINI_CLI_TRUST_WORKSPACE ?? null }));
+} else if (mode === 'drip') {
+  // writes part of an answer, then keeps working past any timeout
+  process.stdout.write('Finding 1: rounding happens before summing.\n');
+  setTimeout(() => process.stdout.write('Finding 2: never reached.\n'), 60_000);
+} else if (mode === 'preamble') {
+  // what grok left: an announcement and nothing after it
+  process.stdout.write("I'll read `payment.ts` and report only what the file actually does. The file is short. I'll confirm only the JavaScript rounding and `toFixed` edges that the amount line depends on.");
 } else if (mode.startsWith('sleep:')) {
   setTimeout(() => process.stdout.write('woke'), Number(mode.slice(6)));
 } else if (mode.startsWith('env:')) {

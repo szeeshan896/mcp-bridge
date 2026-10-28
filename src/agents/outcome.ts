@@ -83,6 +83,29 @@ export function selfReportedFailure(output: string): string | null {
   return null;
 }
 
+/**
+ * An answer that is nothing but an announcement -- "I'll read payment.ts and report only
+ * what the file actually does." -- with nothing after it. That is what an agent leaves
+ * when it stops at its first tool step, typically one it was not allowed to take, and it
+ * read as `succeeded: true` with no answer in it. Short, opening with an intention, and
+ * without a single line that looks like a finding.
+ */
+export function onlyAnnounced(output: string): boolean {
+  const text = output.trim();
+  if (!text || text.length > 500) return false;
+  // an intention to go and look at something, not "I'll be brief: ..." followed by an answer
+  if (!PREAMBLE_OPENING.test(text)) return false;
+  // anything with structure or code is an answer, however it opens
+  if (/```|^\s*[-*•]\s|^\s*\d+[.)]\s|\w\.\w+:\d+|\n\s*\n/m.test(text)) return false;
+  const sentences = text.split(/(?<=[.!?])\s+/).filter((s) => s.trim());
+  return sentences.every((s) => INTENTION.test(s) || s.length < 60);
+}
+
+const STEP = '(?:read|check|look|inspect|review|confirm|examine|open|run|analy[sz]e|go through|explore|search|scan|start|begin|investigate|verify|find|trace|walk through|take a look)';
+const PREAMBLE_OPENING = new RegExp(
+  `^(?:(?:okay|ok|sure|alright|first|now|great),?\\s+)?(?:I'll|I will|I'm going to|I am going to|Let me|I need to|I'm about to)\\s+(?:first\\s+|now\\s+|start by\\s+|begin by\\s+)?${STEP}`, 'i');
+const INTENTION = new RegExp(`\\b(?:I'll|I will|I'm going to|I am going to|Let me|I need to)\\s+(?:\\w+\\s+){0,3}?${STEP}`, 'i');
+
 /** Errors a CLI printed while still exiting 0 -- a failing hook is the case that prompted this. */
 export function troubleOnSuccess(stderr: string): string | null {
   const lines = stripAnsi(stderr).split(/\r?\n/).filter((l) =>

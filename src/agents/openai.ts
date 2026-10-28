@@ -21,6 +21,12 @@ export class OpenAiAgent implements Agent {
   readonly requires: string;
   // an HTTP model sees only what the prompt carries
   readonly readsFiles = false;
+  readonly writesFiles = false;
+  readonly runsCommands = false;
+
+  get timeoutMs(): number {
+    return this.config.timeoutMs ?? 300_000;
+  }
 
   constructor(
     readonly name: string,

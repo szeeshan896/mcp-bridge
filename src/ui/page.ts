@@ -76,6 +76,13 @@ export function uiPage(): string {
       <div data-kind="cli">
         <label>Command <span class="hint">one argument per line; {prompt} marks where the prompt goes</span><textarea name="command" rows="4"></textarea></label>
         <label>Prompt goes in<select name="promptVia"><option value="argv">the command line ({prompt})</option><option value="stdin">standard input</option></select></label>
+        <fieldset id="allowBox"><legend>What it may do when a client asks it — off means it reads and reports only</legend>
+          <label class="check"><input type="checkbox" name="allowEdits"> Change files in the working directory</label>
+          <label class="check"><input type="checkbox" name="allowCommands"> Run commands there, such as tests and builds</label>
+          <label class="check" id="trustRow"><input type="checkbox" name="allowTrust"> Trust the working directory it is sent to</label>
+          <p class="hint" id="allowNote"></p>
+          <p class="hint">Any app connected to your relay can ask this agent for work. Allow only what you are happy for those apps to have done on this computer.</p>
+        </fieldset>
       </div>
       <label>Timeout, seconds <span class="hint">optional</span><input name="timeoutSeconds" type="number" min="1" max="3600"></label>
       <div class="actions">
@@ -115,6 +122,8 @@ td.detail{color:var(--muted);word-break:break-word;font-size:13px}td.btns{white-
 .tag{white-space:nowrap;font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 5px;margin-left:6px}
 .result{margin-top:6px;padding:8px 10px;border-radius:8px;background:#0b0d12;border:1px solid var(--line);white-space:pre-wrap;font:13px ui-monospace,Menlo,Consolas,monospace;color:var(--text)}
 .result.bad{border-color:var(--bad)}.result.good{border-color:var(--ok)}
+fieldset{border:1px solid var(--line);border-radius:8px;margin:12px 0 0;padding:8px 12px}legend{color:var(--muted);font-size:13px;padding:0 4px}
+label.check{display:flex;align-items:center;gap:8px;color:var(--text);font-size:14px}label.check input{width:auto;margin:0}
 .note{background:#1d2230;border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:13px;color:var(--muted);margin:10px 0 0}
 .banner{padding:10px 14px;border-radius:8px;margin:10px 0}.banner.bad{background:#2a1414;border:1px solid var(--bad);color:var(--bad)}
 pre{background:#0b0d12;border:1px solid var(--line);border-radius:8px;padding:10px;white-space:pre-wrap;font:12px ui-monospace,Menlo,Consolas,monospace;max-height:220px;overflow:auto}
@@ -186,7 +195,10 @@ function renderAgents() {
     const label = { 'quota-exhausted': '✗ limit reached', 'sign-in-failed': '✗ sign-in failed', 'directory-not-trusted': '✗ folder not trusted' }[a.status];
     const status = el('td', {}, a.available ? el('span', { class: 'ok', text: '✓ ready' }) : el('span', { class: 'err', text: label || '✗ not ready' }),
       el('div', { class: 'hint', text: a.calls ? a.calls + ' call' + (a.calls === 1 ? '' : 's') + (a.lastSuccessAt ? ', last ok ' + new Date(a.lastSuccessAt).toLocaleTimeString() : '') : (a.available ? 'not tried yet' : '') }));
-    const name = el('td', {}, el('b', { text: a.name }), el('span', { class: 'tag', text: a.origin }), a.readsFiles ? null : el('div', { class: 'hint', text: 'cannot read files' }));
+    const may = !a.readsFiles ? 'cannot read files' : (a.writesFiles || a.runsCommands)
+      ? 'may ' + [a.writesFiles ? 'edit files' : '', a.runsCommands ? 'run commands' : ''].filter(Boolean).join(' & ')
+      : 'read-only';
+    const name = el('td', {}, el('b', { text: a.name }), el('span', { class: 'tag', text: a.origin }), el('div', { class: 'hint', text: may + ' · ' + a.timeoutSeconds + ' s limit' }));
     const detail = el('td', { class: 'detail' }, el('div', { text: a.detail }));
     if (a.key) detail.append(el('div', { class: 'hint', text: 'key ' + a.key.env + ': ' + (a.key.saved ? 'saved ' + a.key.saved : a.key.inEnvironment ? 'from the environment' : 'not set') }));
     const result = el('div');
@@ -204,8 +216,8 @@ function renderAgents() {
       test.disabled = false;
     } });
     btns.append(test);
+    btns.append(el('button', { class: 'ghost small', type: 'button', text: a.origin === 'built-in' ? 'Customise' : 'Edit', onclick: () => editAgent(a) }));
     if (a.origin !== 'built-in') {
-      btns.append(el('button', { class: 'ghost small', type: 'button', text: 'Edit', onclick: () => editAgent(a) }));
       btns.append(el('button', { class: 'danger small', type: 'button', text: 'Remove', onclick: async () => {
         if (!confirm('Remove "' + a.name + '" from your config?' + (a.origin === 'override' ? ' The built-in version comes back.' : ''))) return;
         try { await api('/api/agents/remove', { name: a.name }); await load(); } catch (e) { alert(e.message); }
@@ -237,8 +249,27 @@ function applyPreset(p) {
   $('keyLink').hidden = !p.keyUrl; if (p.keyUrl) $('keyLink').href = p.keyUrl;
   $('presetNote').hidden = !p.note; $('presetNote').textContent = p.note || '';
   $('modelSelect').replaceChildren(); $('modelPick').hidden = true; $('modelsInfo').textContent = '';
+  f.allowEdits.checked = false; f.allowCommands.checked = false; f.allowTrust.checked = false;
+  showAllow(null, (p.command || [])[0]);
   $('agentErr').textContent = ''; $('agentOk').textContent = '';
   showKind(p.kind);
+}
+
+// which switches mean something depends on the CLI; for one the bridge does not know, none do
+const KNOWN = { claude: [1, 1, 0, ''], codex: [1, 1, 0, 'For Codex, edits and commands are one sandbox setting: either turns on both.'],
+  grok: [1, 1, 0, 'Grok Build approves everything or nothing: either turns on both.'], gemini: [1, 1, 1, 'Allowing commands also allows edits for Gemini CLI.'] };
+function showAllow(permissions, executable) {
+  let supports = permissions && permissions.supports, note = permissions ? permissions.note : '';
+  if (!supports) {
+    const first = String(executable || $('agentForm').command.value.split('\\n')[0] || '');
+    const exe = first.split(/[\\\\/]/).pop().toLowerCase().replace(/\\.(exe|cmd|bat|ps1)$/, '');
+    const k = KNOWN[exe];
+    supports = k ? { edits: !!k[0], commands: !!k[1], trustDirectory: !!k[2] } : null; note = k ? k[3] : '';
+  }
+  $('allowBox').hidden = !supports;
+  if (!supports) return;
+  $('trustRow').hidden = !supports.trustDirectory;
+  $('allowNote').textContent = note;
 }
 
 function editAgent(a) {
@@ -252,9 +283,13 @@ function editAgent(a) {
   if (a.key && a.key.saved) f.apiKey.placeholder = 'saved ' + a.key.saved + ' — leave empty to keep it';
   f.command.value = (c.command || []).join('\\n'); f.promptVia.value = c.promptVia || 'argv';
   f.timeoutSeconds.value = c.timeoutMs ? Math.round(c.timeoutMs / 1000) : '';
+  const allow = c.allow || {};
+  f.allowEdits.checked = !!allow.edits; f.allowCommands.checked = !!allow.commands; f.allowTrust.checked = !!allow.trustDirectory;
+  showAllow(a.permissions);
   f.scrollIntoView({ behavior: 'smooth' });
 }
 
+$('agentForm').command.addEventListener('input', () => showAllow(null));
 $('modelSelect').addEventListener('change', (e) => { $('agentForm').model.value = e.target.value; });
 $('preset').addEventListener('change', (e) => applyPreset(presets.find((p) => p.id === e.target.value)));
 $('resetForm').addEventListener('click', () => applyPreset(presets.find((p) => p.id === $('preset').value) || presets[0]));
@@ -288,7 +323,8 @@ $('agentForm').addEventListener('submit', async (e) => {
   if (f.timeoutSeconds.value) body.timeoutMs = Number(f.timeoutSeconds.value) * 1000;
   if (kind === 'openai') Object.assign(body, { baseUrl: f.baseUrl.value, model: f.model.value, apiKeyEnv: f.apiKeyEnv.value, apiKey: f.apiKey.value });
   if (kind === 'ollama') Object.assign(body, { baseUrl: f.baseUrl.value, model: f.model.value });
-  if (kind === 'cli') Object.assign(body, { command: f.command.value.split('\\n').map((s) => s.trim()).filter(Boolean), promptVia: f.promptVia.value });
+  if (kind === 'cli') Object.assign(body, { command: f.command.value.split('\\n').map((s) => s.trim()).filter(Boolean), promptVia: f.promptVia.value,
+    allow: { edits: f.allowEdits.checked, commands: f.allowCommands.checked, trustDirectory: f.allowTrust.checked } });
   try {
     const r = await api('/api/agents/save', body);
     $('agentOk').textContent = '✓ saved "' + r.saved + '" — press Test on it below' + (state.connection.state !== 'stopped' ? '; the relay already has it' : '');

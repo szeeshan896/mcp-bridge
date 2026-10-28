@@ -58,6 +58,11 @@ export class HealthStore {
     return this.byAgent.get(name);
   }
 
+  /** Forgets an agent, for when its configuration changed and the old lessons may not hold. */
+  forget(name: string): void {
+    this.byAgent.delete(name);
+  }
+
   /** The state a caller should act on: a durable failure newer than the last success wins. */
   state(name: string, probedAvailable: boolean, now = Date.now()): AgentState {
     if (!probedAvailable) return 'unavailable';

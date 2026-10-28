@@ -36,7 +36,10 @@ export function createServer(
         '"available": false says why. Then ask_agent to delegate and get the answer in the',
         'same call. The agent you delegate to cannot see this conversation or these files,',
         'so write a self-contained prompt and pass workingDirectory for anything about code.',
-        'For work that would outlast this request, use start_task and poll get_task.',
+        'Agents are read-only unless list_agents says otherwise ("writesFiles", "runsCommands"):',
+        'shape the task to what the agent may do. Each call stops at the agent\'s "timeoutSeconds".',
+        'For work that would outlast this request, use start_task and poll get_task; only a few',
+        'run at once, and the rest wait as "queued".',
       ].join(' '),
     },
   );
@@ -52,7 +55,10 @@ export function createServer(
         '"quota-exhausted", "sign-in-failed", "directory-not-trusted" -- with "lastError", ' +
         '"lastErrorAt" and, when the agent said so, "retryAt". A "ready" agent that has never ' +
         'been called ("calls": 0) is still unproven: its account may not work. ' +
-        '"detail" carries the reason. "readsFiles" says whether passing ' +
+        '"detail" carries the reason. ' + 'Agents are read-only unless their owner allowed more: "writesFiles" and "runsCommands" ' +
+        'say whether one may change files or run commands such as tests. If neither is true, ask ' +
+        'it to read and report, not to write a file or run something. ' +
+        '"timeoutSeconds" is how long one call may run. "readsFiles" says whether passing ' +
         'workingDirectory actually lets that agent see your files — when it is false, put the ' +
         'content in the prompt instead.',
       inputSchema: {},
@@ -93,7 +99,10 @@ export function createServer(
       description:
         'Start a delegated task and return its id immediately, for work that would outlast ' +
         'this request. Poll get_task with the id. Prefer ask_agent for anything that finishes ' +
-        'in a minute or two — it is one call instead of several.',
+        'in a minute or two — it is one call instead of several. ' + 'Only a few delegations run at once (two by default); more wait their turn, shown as ' +
+        '"queued" by get_task, and several tasks on one agent spend its account\'s quota together. ' +
+        'An agent whose last call hit its usage limit or a failed sign-in is not started again ' +
+        'until that clears; the result says so at once.',
       inputSchema: {
         agent: z.string().describe('Which agent to use, exactly as list_agents names it.'),
         prompt: z.string().min(1).describe('The full self-contained task for that agent.'),
@@ -109,9 +118,11 @@ export function createServer(
     {
       title: 'Check a delegated task',
       description:
-        'Look up a task started with start_task. While "status" is "running" the agent is ' +
-        'still working — wait before asking again rather than polling in a tight loop. Once it ' +
-        'is "finished", "result" holds the same shape ask_agent returns.',
+        'Look up a task started with start_task. "queued" means it is waiting for a free slot ' +
+        '("queuePosition" ahead of it) and its timeout has not started; "running" means the agent ' +
+        'is working, with its latest output in "outputSoFar" and the time of it in "lastOutputAt" ' +
+        '-- a long silence there is the sign of a stuck agent. Wait between checks rather than ' +
+        'polling in a tight loop. Once "finished", "result" holds the same shape ask_agent returns.',
       inputSchema: {
         id: z.string().describe('The task id returned by start_task.'),
       },

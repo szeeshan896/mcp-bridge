@@ -16,6 +16,12 @@ export class OllamaAgent implements Agent {
   readonly requires: string;
   // an HTTP model sees only what is in the prompt; a directory means nothing to it
   readonly readsFiles = false;
+  readonly writesFiles = false;
+  readonly runsCommands = false;
+
+  get timeoutMs(): number {
+    return this.config.timeoutMs ?? 300_000;
+  }
 
   constructor(
     readonly name: string,

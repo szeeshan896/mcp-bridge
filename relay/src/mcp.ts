@@ -90,7 +90,9 @@ function buildServer(userId: string, hub: DeviceHub): McpServer {
         'machine is connected right now; if "offline" is true, nothing can be delegated until ' +
         'the owner runs `mcpbridge connect` there. Then ask_agent to delegate and get the answer ' +
         'in one call. The agent cannot see this conversation, so write a self-contained prompt, ' +
-        'and pass workingDirectory for anything about files on that machine.',
+        'and pass workingDirectory for anything about files on that machine. Agents are read-only ' +
+        'unless list_agents says otherwise ("writesFiles", "runsCommands"): shape the task to what ' +
+        'the agent may do. Each call stops at the agent\'s "timeoutSeconds".',
     },
   );
 
@@ -122,7 +124,10 @@ function buildServer(userId: string, hub: DeviceHub): McpServer {
         '"quota-exhausted", "sign-in-failed", "directory-not-trusted" -- with "lastError", ' +
         '"lastErrorAt" and, when the agent said so, "retryAt". A "ready" agent that has never ' +
         'been called ("calls": 0) is still unproven: its account may not work. ' +
-        '"detail" carries the reason.',
+        '"detail" carries the reason. ' + 'Agents are read-only unless their owner allowed more: "writesFiles" and "runsCommands" ' +
+        'say whether one may change files or run commands such as tests. If neither is true, ask ' +
+        'it to read and report, not to write a file or run something. ' +
+        '"timeoutSeconds" is how long one call may run.',
       inputSchema: {},
     },
     async () => {
@@ -156,7 +161,11 @@ function buildServer(userId: string, hub: DeviceHub): McpServer {
       title: 'Delegate without waiting',
       description:
         'Start a delegated task on the connected machine and return its id at once. Poll ' +
-        'get_task with the id. Prefer ask_agent for anything that finishes in a minute or two.',
+        'get_task with the id. Prefer ask_agent for anything that finishes in a minute or two. ' +
+        'Only a few delegations run at once (two by default); more wait their turn, shown as ' +
+        '"queued" by get_task, and several tasks on one agent spend its account\'s quota together. ' +
+        'An agent whose last call hit its usage limit or a failed sign-in is not started again ' +
+        'until that clears.',
       inputSchema: delegation,
     },
     async (args) => json(await forward(hub, userId, 'start_task', args, QUICK_TIMEOUT_MS)),
@@ -167,8 +176,10 @@ function buildServer(userId: string, hub: DeviceHub): McpServer {
     {
       title: 'Check a delegated task',
       description:
-        'Look up a task started with start_task. While "status" is "running" wait before ' +
-        'asking again; once "finished", "result" holds the same shape ask_agent returns.',
+        'Look up a task started with start_task. "queued" means it waits for a free slot ' +
+        '("queuePosition") and its timeout has not started; "running" carries the latest output ' +
+        'in "outputSoFar" and its time in "lastOutputAt" -- a long silence there means a stuck ' +
+        'agent. Wait between checks; once "finished", "result" holds the same shape ask_agent returns.',
       inputSchema: { id: z.string().describe('The task id from start_task.') },
     },
     async (args) => json(await forward(hub, userId, 'get_task', args, QUICK_TIMEOUT_MS)),

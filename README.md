@@ -67,10 +67,51 @@ agent's own timeout, which is five minutes unless configured.
 - **`diagnostics`** is short: the caller's own prompt is removed when a CLI echoes it, a
   repeated line appears once, and long output keeps the error lines ahead of the banner.
 
+- **`writesFiles`** and **`runsCommands`** say whether an agent may change files and run
+  commands such as tests. Both are off by default — every one of these CLIs is cautious
+  when nobody is there to approve a step: Codex runs in a read-only sandbox, Claude Code
+  denies edits and shell commands, Grok Build and Gemini CLI stop at their approval
+  prompts. A task that needs either belongs with an agent that has it; otherwise ask for a
+  reading and a report. An answer that is only an announcement ("I'll read payment.ts and
+  report…") with nothing after it — what an agent leaves when it stops at a step it was not
+  allowed to take — comes back as a failure that says so.
+- **`timeoutSeconds`** is how long one call may run. On a timeout, whatever the agent had
+  written by then comes back in `output`, marked incomplete.
+- **Tasks queue.** Only `maxConcurrent` delegations run at once (two by default).
+  `get_task` shows `queued` with a `queuePosition` while one waits — its timeout has not
+  started — then `running` with the latest output in `outputSoFar` and its time in
+  `lastOutputAt`, so a working agent and a stuck one no longer look the same. Several
+  tasks on one agent spend its account's quota together; once a call hits a usage limit or
+  a failed sign-in, the rest are not started until that clears, and say so at once.
+
+### Letting an agent edit files or run commands
+
+In the control panel, **Edit** (or **Customise** for a built-in) a CLI agent and tick what
+it may do; in `config.json` it is the agent's `allow`:
+
+```json
+"codex": { "command": ["codex", "exec", "{prompt}"], "allow": { "edits": true, "commands": true } }
+```
+
+For the CLIs the bridge knows, that becomes the CLI's own flags:
+
+| CLI | edits | commands | trust the directory |
+|---|---|---|---|
+| claude | `--permission-mode acceptEdits` | `--allowedTools Bash` | — |
+| codex | `--sandbox workspace-write` (one setting for both) | same | — |
+| grok | `--always-approve` (all or nothing) | same | — |
+| gemini | `--approval-mode auto_edit` | `--approval-mode yolo` | `GEMINI_CLI_TRUST_WORKSPACE=true` |
+
+Any app connected to your relay can ask that agent for work, so allow only what you are
+happy for those apps to have done on your computer. A CLI the bridge does not know gets no
+flags; put them in its `command` yourself and declare the result with
+`"capabilities": { "writesFiles": true, "runsCommands": true }`.
+
 The bridge does not mark directories as trusted on a CLI's behalf. Gemini CLI, for one,
 refuses an untrusted directory when unattended; the directory comes from whichever client
 made the call, so the diagnostic names the variable to set in that agent's `env` if you
-trust what your clients send it to, rather than setting it for you.
+trust what your clients send it to, rather than setting it for you — or tick *Trust the
+working directory* for that agent in the control panel.
 
 ## Check what you have
 
@@ -406,7 +447,7 @@ with the path to set by hand, so an unrecognised one never produces a wrong comm
 
 ```bash
 npm install
-npm test          # typecheck + 98 tests
+npm test          # typecheck + 106 tests
 npm run build
 npm start         # stdio, from source
 ```

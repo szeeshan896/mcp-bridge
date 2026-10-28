@@ -9,6 +9,9 @@ import { type Agent, type AgentResult, failed } from './types.js';
  */
 export class BrokenAgent implements Agent {
   readonly readsFiles = false;
+  readonly writesFiles = false;
+  readonly runsCommands = false;
+  readonly timeoutMs = 0;
   readonly requires = 'a valid configuration';
 
   constructor(
