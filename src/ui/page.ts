@@ -66,8 +66,9 @@ export function uiPage(): string {
         </div>
         <div class="grid2">
           <label>Model
-            <input name="model" list="modelList" placeholder="pick from the list, or type an id">
-            <datalist id="modelList"></datalist></label>
+            <input name="model" placeholder="type an id, or list the models and pick one"></label>
+          <label id="modelPick" hidden>Models this key can reach
+            <select id="modelSelect"></select></label>
           <div class="inline-actions" data-kind="openai"><button type="button" class="ghost" id="fetchModels">List models</button><span class="muted" id="modelsInfo"></span></div>
         </div>
         <label data-kind="openai">Key variable <span class="hint">the name the key is saved under</span><input name="apiKeyEnv" placeholder="e.g. NVIDIA_API_KEY"></label>
@@ -233,7 +234,7 @@ function applyPreset(p) {
   f.command.value = (p.command || []).join('\\n'); f.promptVia.value = p.promptVia || 'argv'; f.timeoutSeconds.value = '';
   $('keyLink').hidden = !p.keyUrl; if (p.keyUrl) $('keyLink').href = p.keyUrl;
   $('presetNote').hidden = !p.note; $('presetNote').textContent = p.note || '';
-  $('modelList').replaceChildren(); $('modelsInfo').textContent = '';
+  $('modelSelect').replaceChildren(); $('modelPick').hidden = true; $('modelsInfo').textContent = '';
   $('agentErr').textContent = ''; $('agentOk').textContent = '';
   showKind(p.kind);
 }
@@ -252,6 +253,7 @@ function editAgent(a) {
   f.scrollIntoView({ behavior: 'smooth' });
 }
 
+$('modelSelect').addEventListener('change', (e) => { $('agentForm').model.value = e.target.value; });
 $('preset').addEventListener('change', (e) => applyPreset(presets.find((p) => p.id === e.target.value)));
 $('resetForm').addEventListener('click', () => applyPreset(presets.find((p) => p.id === $('preset').value) || presets[0]));
 $('refresh').addEventListener('click', async () => { await api('/api/reload', {}).catch(() => {}); await load(); });
@@ -262,8 +264,15 @@ $('fetchModels').addEventListener('click', async () => {
   btn.disabled = true; $('modelsInfo').textContent = 'asking the provider…';
   try {
     const r = await api('/api/models', { baseUrl: f.baseUrl.value, apiKey: f.apiKey.value, apiKeyEnv: f.apiKeyEnv.value });
-    $('modelList').replaceChildren(...r.models.map((m) => el('option', { value: m })));
-    $('modelsInfo').textContent = r.models.length + ' models — click the Model field to pick one';
+    // a real select, not a datalist: a datalist only offers what matches the text already
+    // in the field, so a pre-filled model hid every other choice
+    const current = f.model.value;
+    const options = r.models.map((m) => el('option', { value: m, text: m }));
+    if (current && !r.models.includes(current)) options.unshift(el('option', { value: current, text: current + '  (not listed by the provider)' }));
+    $('modelSelect').replaceChildren(...options);
+    if (current) $('modelSelect').value = current;
+    $('modelPick').hidden = false;
+    $('modelsInfo').textContent = r.models.length + ' models — choose one below';
     if (!f.model.value && r.models.length) f.model.value = r.models[0];
   } catch (e) { $('modelsInfo').textContent = e.message; }
   btn.disabled = false;
