@@ -179,6 +179,39 @@ devDependencies, and without `@types/node` and `typescript` the build fails with
 (`npm i github:szeeshan896/mcpbridge`) does work, because that path does install them.
 Publishing removes the question entirely.
 
+## From anywhere: the hosted relay
+
+Everything above runs where the client runs. That rules out claude.ai in a browser or on a
+phone, because Anthropic's servers call connectors from the cloud and cannot reach a
+laptop's localhost. The answer is not to host the bridge — a server has no `claude.exe`
+signed in as you, and holding users' sessions would be both a liability and against every
+provider's terms — but to host a **relay** that only forwards, while the CLIs keep running
+where they are signed in.
+
+```
+ claude.ai · phone · Desktop · Cursor ──HTTPS──►  relay  ──WebSocket──►  your laptop
+                                                 (public URL,            mcpbridge connect
+                                                  no AI credentials)     claude · codex · agy
+```
+
+On your machine:
+
+```bash
+npx -y mcpbridge connect --relay https://bridge.yourdomain.com --token mba_…
+```
+
+It opens an outbound connection — nothing listens, no firewall rule — and answers the
+calls the relay forwards with exactly the same code the local server runs. Close the lid
+and the dashboard shows *offline*; that is the point, not a limitation: it is why the
+server needs no keys.
+
+The relay itself lives in [`relay/`](relay/README.md): accounts (email or phone, password or
+Google), 2-step verification with an authenticator app, two tokens per account stored as
+hashes, a dashboard that generates the exact lines to paste into each client, and a
+`Dockerfile` that deploys to Fly, Railway or any VPS. Clients that send a header work
+today; claude.ai registers connectors through OAuth, which is the next thing the relay
+will add.
+
 ## Reaching a model that has no CLI
 
 Some providers publish no command-line tool at all. xAI is one: there is no official Grok
@@ -341,6 +374,9 @@ src/tasks.ts  background tasks behind start_task / get_task
 src/limit.ts  the concurrency cap both paths queue through
 src/server.ts the four tools
 src/index.ts  entry point and transport choice
+src/connect.ts the outbound connection to a relay; src/protocol.ts its wire format
+src/tools.ts  the four tools as plain functions, shared by the server and the relay path
+relay/        the hosted relay: accounts, tokens, 2FA, dashboard, MCP forwarding
 ```
 
 A Java and Spring Boot implementation came first and is preserved in this repository's
