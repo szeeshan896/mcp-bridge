@@ -76,9 +76,20 @@ machine that stops when idle would drop every one of them.
 
 **Railway**
 
-New project → Deploy from GitHub repo. Railway picks up the `Dockerfile`. Add a volume
-mounted at `/data`, set `SESSION_SECRET` and `PUBLIC_URL` (Railway gives you the domain),
-and deploy. Attach your own domain under Settings → Networking.
+New project → Deploy from GitHub repo. The repository's `railway.json` tells Railway to
+build the `Dockerfile`, check `/healthz`, and keep one replica (agents hold a WebSocket to
+it, so two would split them). Then, in the service:
+
+1. *Variables*: `SESSION_SECRET` (any long random string) and `PUBLIC_URL`
+   (`https://your-domain`, or the `*.up.railway.app` domain Railway generates).
+2. *Volume*: attach one mounted at `/data`.
+3. *Settings → Networking*: generate a domain, or add your own and create the CNAME
+   Railway shows at your DNS provider. With Cloudflare, keep that record **DNS only**
+   (grey cloud) so Railway terminates TLS; the proxied mode also works with Cloudflare's
+   SSL mode set to *Full (strict)*, but adds nothing here.
+
+Hobby plan services run in the US regions; the Pro plan adds Singapore and others. A
+delegation takes seconds to minutes, so the extra round-trip time barely registers.
 
 **A VPS (Hetzner, DigitalOcean, …)**
 
