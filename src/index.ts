@@ -6,9 +6,17 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 
 import { AgentRegistry } from './agents/registry.js';
 import { configPath, loadConfig } from './config.js';
+import { connectToRelay } from './connect.js';
 import { ConcurrencyLimit } from './limit.js';
 import { createServer } from './server.js';
 import { TaskStore } from './tasks.js';
+
+const VERSION = '0.1.0';
+
+function flag(argv: string[], name: string): string | undefined {
+  const index = argv.indexOf(name);
+  return index === -1 ? undefined : argv[index + 1];
+}
 
 const USAGE = `mcpbridge - delegate work to another AI agent over MCP
 
@@ -19,6 +27,9 @@ const USAGE = `mcpbridge - delegate work to another AI agent over MCP
                              delegate once from the terminal, to check an agent works
                              before wiring it into a client
   mcpbridge --example-config print a starter config; JSON on stdout, notes on stderr
+  mcpbridge connect --relay <url> --token <token> [--device <name>]
+                             keep this machine connected to a hosted relay, so clients
+                             anywhere can delegate to the CLIs signed in here
   mcpbridge --help
 
 Register it with a client once, e.g.
@@ -84,6 +95,31 @@ async function main(): Promise<void> {
       return;
     }
     process.stderr.write(`\nok in ${result.durationMs}ms\n`);
+    return;
+  }
+
+  if (argv[0] === 'connect') {
+    const relay = flag(argv, '--relay') ?? process.env['MCPBRIDGE_RELAY'];
+    const token = flag(argv, '--token') ?? process.env['MCPBRIDGE_TOKEN'];
+    const device = flag(argv, '--device') ?? process.env['MCPBRIDGE_DEVICE'];
+    if (!relay || !token) {
+      console.error('usage: mcpbridge connect --relay <url> --token <token> [--device <name>]');
+      console.error('       (or set MCPBRIDGE_RELAY and MCPBRIDGE_TOKEN)');
+      process.exitCode = 1;
+      return;
+    }
+    const controller = new AbortController();
+    process.on('SIGINT', () => controller.abort());
+    process.on('SIGTERM', () => controller.abort());
+    console.error(`mcpbridge connecting to ${relay}, agents from ${source}`);
+    await connectToRelay({
+      relayUrl: relay,
+      token,
+      ...(device ? { device } : {}),
+      agentVersion: VERSION,
+      context: { registry, tasks, limit },
+      signal: controller.signal,
+    });
     return;
   }
 

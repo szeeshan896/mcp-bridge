@@ -4,6 +4,7 @@ import { z } from 'zod';
 import type { AgentRegistry } from './agents/registry.js';
 import type { ConcurrencyLimit } from './limit.js';
 import type { TaskStore } from './tasks.js';
+import { executeTool, type ToolContext } from './tools.js';
 
 const PACKAGE_NAME = 'mcpbridge';
 const PACKAGE_VERSION = '0.1.0';
@@ -17,6 +18,7 @@ export function createServer(
   tasks: TaskStore,
   limit: ConcurrencyLimit,
 ): McpServer {
+  const context: ToolContext = { registry, tasks, limit };
   const server = new McpServer(
     { name: PACKAGE_NAME, version: PACKAGE_VERSION },
     {
@@ -45,7 +47,7 @@ export function createServer(
         'content in the prompt instead.',
       inputSchema: {},
     },
-    async () => json(await registry.statuses()),
+    async () => json(await executeTool('list_agents', {}, context)),
   );
 
   server.registerTool(
@@ -67,19 +69,7 @@ export function createServer(
           .describe('Absolute path to run the agent in, so it can read the project files.'),
       },
     },
-    async ({ agent, prompt, workingDirectory }) => {
-      const target = registry.find(agent);
-      if (!target) {
-        return json({
-          agent,
-          succeeded: false,
-          output: '',
-          diagnostics: `no agent named "${agent}" is configured. Available: ${registry.names().join(', ')}`,
-        });
-      }
-      const options = workingDirectory ? { cwd: workingDirectory } : {};
-      return json(await limit.run(() => target.run(prompt, options)));
-    },
+    async (args) => json(await executeTool('ask_agent', args, context)),
   );
 
   server.registerTool(
@@ -96,17 +86,7 @@ export function createServer(
         workingDirectory: z.string().optional().describe('Absolute path to run the agent in.'),
       },
     },
-    async ({ agent, prompt, workingDirectory }) => {
-      const target = registry.find(agent);
-      if (!target) {
-        return json({
-          started: false,
-          diagnostics: `no agent named "${agent}" is configured. Available: ${registry.names().join(', ')}`,
-        });
-      }
-      const task = tasks.start(target, prompt, workingDirectory ? { cwd: workingDirectory } : {});
-      return json({ started: true, id: task.id, agent: task.agent, status: task.status });
-    },
+    async (args) => json(await executeTool('start_task', args, context)),
   );
 
   server.registerTool(
@@ -121,12 +101,7 @@ export function createServer(
         id: z.string().describe('The task id returned by start_task.'),
       },
     },
-    async ({ id }) => {
-      const task = tasks.get(id);
-      return task
-        ? json(task)
-        : json({ id, found: false, diagnostics: 'no task with that id; it may have expired' });
-    },
+    async (args) => json(await executeTool('get_task', args, context)),
   );
 
   return server;
