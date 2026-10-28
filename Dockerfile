@@ -10,11 +10,13 @@ RUN npm ci --ignore-scripts && npm run build
 
 COPY relay/package.json relay/package-lock.json relay/tsconfig.json ./relay/
 COPY relay/src ./relay/src
-# Installing the relay runs the linked parent's `prepare` (npm does that for file:
-# dependencies, --ignore-scripts or not), which needs the parent's typescript still
-# installed -- so both trees are pruned only after both are built.
+# Any npm operation on the relay -- install *and* prune -- runs the linked parent's
+# `prepare` (npm does that for file: dependencies, --ignore-scripts or not), and that
+# runs tsc. So the relay is pruned first, while the parent still has typescript, and the
+# parent is pruned last, after which nothing touches the relay's tree again.
 RUN cd relay && npm ci && npm run build
-RUN npm prune --omit=dev && cd relay && npm prune --omit=dev
+RUN cd relay && npm prune --omit=dev
+RUN npm prune --omit=dev
 
 FROM node:22-alpine
 ENV NODE_ENV=production PORT=8080 HOST=0.0.0.0 DATABASE_PATH=/data/relay.sqlite
