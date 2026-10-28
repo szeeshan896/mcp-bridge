@@ -20,6 +20,14 @@ export interface AgentResult {
 export interface RunOptions {
   /** directory to run in, so the agent can see a project's files */
   cwd?: string;
+  /** the caller's own bound; only ever shortens the agent's configured timeout */
+  timeoutMs?: number;
+}
+
+/** The configured limit, lowered to the caller's when the caller asked for less. */
+export function effectiveTimeout(configured: number | undefined, options: RunOptions): number {
+  const base = configured ?? 300_000;
+  return options.timeoutMs && options.timeoutMs > 0 ? Math.min(base, options.timeoutMs) : base;
 }
 
 /**

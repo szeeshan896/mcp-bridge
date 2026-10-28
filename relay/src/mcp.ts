@@ -101,6 +101,13 @@ function buildServer(userId: string, hub: DeviceHub): McpServer {
       .string()
       .optional()
       .describe('Absolute path on the connected machine to run the agent in.'),
+    timeoutSeconds: z
+      .number()
+      .int()
+      .min(10)
+      .max(3600)
+      .optional()
+      .describe('Stop the agent after this many seconds. Only shortens its configured timeout.'),
   };
 
   server.registerTool(
@@ -110,8 +117,12 @@ function buildServer(userId: string, hub: DeviceHub): McpServer {
       description:
         'List the AI agents on the account owner\'s connected machine and whether each can be ' +
         'started. If the machine is not connected the result says so, with how to connect it. ' +
-        '"available" means the command was found — not that its account works; a signed-out ' +
-        'CLI still fails when asked and explains why in "diagnostics".',
+        'For each agent, "available" is true only when the command was found and no recent call hit a durable ' +
+        'failure. "status" says which: "ready", "unavailable", or what an earlier call ran into -- ' +
+        '"quota-exhausted", "sign-in-failed", "directory-not-trusted" -- with "lastError", ' +
+        '"lastErrorAt" and, when the agent said so, "retryAt". A "ready" agent that has never ' +
+        'been called ("calls": 0) is still unproven: its account may not work. ' +
+        '"detail" carries the reason.',
       inputSchema: {},
     },
     async () => {
@@ -129,8 +140,11 @@ function buildServer(userId: string, hub: DeviceHub): McpServer {
       description:
         'Hand a task to an agent on the connected machine and wait for its answer, in one ' +
         'call. The agent starts fresh with no knowledge of this conversation, so make the ' +
-        'prompt self-contained. If "succeeded" is false, read "diagnostics"; if "offline" is ' +
-        'true the owner\'s machine is not connected. For long jobs use start_task.',
+        'prompt self-contained. If "succeeded" is false, read "diagnostics" -- that includes an ' +
+        'agent that ran but says it could not do the work; if "notes" is set, read it before ' +
+        'trusting "output"; if "offline" is true the owner\'s machine is not connected. Each call ' +
+        'is bounded by the agent\'s timeout (5 minutes unless configured); pass timeoutSeconds ' +
+        'for less. For long jobs use start_task.',
       inputSchema: delegation,
     },
     async (args) => json(await forward(hub, userId, 'ask_agent', args, DELEGATION_TIMEOUT_MS)),

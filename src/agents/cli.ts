@@ -5,7 +5,8 @@ import { delimiter, dirname, join, sep } from 'node:path';
 
 import type { CliAgentConfig } from '../config.js';
 import { type ShimTarget, parseShimTarget } from './shim.js';
-import { type Agent, type AgentResult, type RunOptions, failed, truncate } from './types.js';
+import { cleanDiagnostics, troubleOnSuccess } from './outcome.js';
+import { type Agent, type AgentResult, type RunOptions, effectiveTimeout, failed, truncate } from './types.js';
 
 export const PROMPT_PLACEHOLDER = '{prompt}';
 
@@ -89,7 +90,7 @@ export class CliAgent implements Agent {
       ? [replacement.command, ...replacement.prefix, ...configured.slice(1)]
       : configured;
     const [command, ...args] = argv as [string, ...string[]];
-    const timeoutMs = this.config.timeoutMs ?? 300_000;
+    const timeoutMs = effectiveTimeout(this.config.timeoutMs, options);
     const cwd = options.cwd ?? this.config.cwd;
     const started = Date.now();
 
@@ -143,14 +144,19 @@ export class CliAgent implements Agent {
 
       child.on('close', (code) => {
         const body = truncate(stdout, this.maxOutputChars);
+        // a CLI that failed often prints its error on stdout, not stderr
+        const failureText = stderr.trim() ? stderr : stdout;
+        const trouble = code === 0 ? troubleOnSuccess(stderr) : null;
         finish({
           agent: this.name,
           succeeded: code === 0,
           output: body.text,
           diagnostics: code === 0
             ? ''
-            : `${this.name} exited with code ${code}. ${truncate(stderr, 4_000).text}`.trim(),
-          notes: '',
+            : `${this.name} exited with code ${code}.\n${cleanDiagnostics(failureText, prompt)}`.trim(),
+          notes: trouble
+            ? `${this.name} exited normally but printed errors while running; a failing hook can stop it reading anything, so check the answer before trusting it:\n${trouble}`
+            : '',
           durationMs: Date.now() - started,
           timedOut: false,
           outputTruncated: body.truncated,

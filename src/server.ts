@@ -13,6 +13,14 @@ function json(value: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }] };
 }
 
+const TIMEOUT_ARG = z
+  .number()
+  .int()
+  .min(10)
+  .max(3600)
+  .optional()
+  .describe('Stop the agent after this many seconds. Only shortens its configured timeout.');
+
 export function createServer(
   registry: AgentRegistry,
   tasks: TaskStore,
@@ -38,11 +46,13 @@ export function createServer(
     {
       title: 'List delegable agents',
       description:
-        'List the AI agents this bridge can delegate to. "available" means its command was ' +
-        'found and can be started — not that its account works: a signed-out CLI or a ' +
-        'withdrawn subscription still lists as available and fails when asked, reporting why ' +
-        'in "diagnostics". Check this before delegating, since "available": false carries its ' +
-        'own reason, such as a CLI that is not installed. "readsFiles" says whether passing ' +
+        'List the AI agents this bridge can delegate to, and what to expect from each. ' +
+        '"available" is true only when the command was found and no recent call hit a durable ' +
+        'failure. "status" says which: "ready", "unavailable", or what an earlier call ran into -- ' +
+        '"quota-exhausted", "sign-in-failed", "directory-not-trusted" -- with "lastError", ' +
+        '"lastErrorAt" and, when the agent said so, "retryAt". A "ready" agent that has never ' +
+        'been called ("calls": 0) is still unproven: its account may not work. ' +
+        '"detail" carries the reason. "readsFiles" says whether passing ' +
         'workingDirectory actually lets that agent see your files — when it is false, put the ' +
         'content in the prompt instead.',
       inputSchema: {},
@@ -59,7 +69,10 @@ export function createServer(
         'thing. The agent starts fresh with no knowledge of this conversation and cannot see ' +
         'your files unless you point it at them, so make the prompt self-contained and pass ' +
         'workingDirectory when the task is about code in a project. If "succeeded" is false, ' +
-        'read "diagnostics". For a job long enough to outlast this request, use start_task.',
+        'read "diagnostics" -- that includes an agent that ran but says it could not do the ' +
+        'work. If "notes" is set, read it before trusting "output". Each call is bounded by ' +
+        'the agent\'s timeout (5 minutes unless configured); pass timeoutSeconds for less. ' +
+        'For a job long enough to outlast this request, use start_task.',
       inputSchema: {
         agent: z.string().describe('Which agent to use, exactly as list_agents names it, e.g. "gemini".'),
         prompt: z.string().min(1).describe('The full self-contained task or question for that agent.'),
@@ -67,6 +80,7 @@ export function createServer(
           .string()
           .optional()
           .describe('Absolute path to run the agent in, so it can read the project files.'),
+        timeoutSeconds: TIMEOUT_ARG,
       },
     },
     async (args) => json(await executeTool('ask_agent', args, context)),
@@ -84,6 +98,7 @@ export function createServer(
         agent: z.string().describe('Which agent to use, exactly as list_agents names it.'),
         prompt: z.string().min(1).describe('The full self-contained task for that agent.'),
         workingDirectory: z.string().optional().describe('Absolute path to run the agent in.'),
+        timeoutSeconds: TIMEOUT_ARG,
       },
     },
     async (args) => json(await executeTool('start_task', args, context)),

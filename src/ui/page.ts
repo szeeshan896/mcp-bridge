@@ -183,7 +183,9 @@ function renderAgents() {
   const body = $('agents');
   body.replaceChildren();
   for (const a of state.agents) {
-    const status = a.available ? el('span', { class: 'ok', text: '✓ ready' }) : el('span', { class: 'err', text: '✗ not ready' });
+    const label = { 'quota-exhausted': '✗ limit reached', 'sign-in-failed': '✗ sign-in failed', 'directory-not-trusted': '✗ folder not trusted' }[a.status];
+    const status = el('td', {}, a.available ? el('span', { class: 'ok', text: '✓ ready' }) : el('span', { class: 'err', text: label || '✗ not ready' }),
+      el('div', { class: 'hint', text: a.calls ? a.calls + ' call' + (a.calls === 1 ? '' : 's') + (a.lastSuccessAt ? ', last ok ' + new Date(a.lastSuccessAt).toLocaleTimeString() : '') : (a.available ? 'not tried yet' : '') }));
     const name = el('td', {}, el('b', { text: a.name }), el('span', { class: 'tag', text: a.origin }), a.readsFiles ? null : el('div', { class: 'hint', text: 'cannot read files' }));
     const detail = el('td', { class: 'detail' }, el('div', { text: a.detail }));
     if (a.key) detail.append(el('div', { class: 'hint', text: 'key ' + a.key.env + ': ' + (a.key.saved ? 'saved ' + a.key.saved : a.key.inEnvironment ? 'from the environment' : 'not set') }));
@@ -209,7 +211,7 @@ function renderAgents() {
         try { await api('/api/agents/remove', { name: a.name }); await load(); } catch (e) { alert(e.message); }
       } }));
     }
-    body.append(el('tr', {}, name, el('td', {}, status), detail, btns));
+    body.append(el('tr', {}, name, status, detail, btns));
   }
 }
 

@@ -16,6 +16,13 @@ export const AgentStatusSchema = z.object({
   available: z.boolean(),
   readsFiles: z.boolean(),
   detail: z.string(),
+  // optional, so an older agent's hello still parses
+  status: z.string().optional(),
+  lastError: z.string().optional(),
+  lastErrorAt: z.string().optional(),
+  retryAt: z.string().optional(),
+  lastSuccessAt: z.string().optional(),
+  calls: z.number().optional(),
 });
 export type AgentStatus = z.infer<typeof AgentStatusSchema>;
 

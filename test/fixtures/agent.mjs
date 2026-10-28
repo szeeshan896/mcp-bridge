@@ -44,6 +44,21 @@ if (mode === 'echo') {
   process.stdout.write(Buffer.concat(chunks).toString('utf8'));
 } else if (mode === 'ansi') {
   process.stdout.write('\u001B[31mred\u001B[0m answer \u001B[1mand bold\u001B[22m');
+} else if (mode === 'quota') {
+  // what codex did in the field report: banner, the prompt echoed back, the error twice
+  process.stderr.write(`OpenAI Codex v0.0\n--------\nworkdir: ${process.cwd()}\nmodel: gpt-x\nsession id: 1234\n--------\nuser\n${prompt}\n`);
+  process.stderr.write("ERROR: You've hit your usage limit. Upgrade to Pro or try again at 4:22 AM.\n");
+  process.stderr.write("ERROR: You've hit your usage limit. Upgrade to Pro or try again at 4:22 AM.\n");
+  process.exit(1);
+} else if (mode === 'blocked') {
+  // what antigravity did: exit 0, an apology for output, the hook failure on stderr
+  process.stderr.write("PreToolUse hook failed: Error: Cannot find module 'C:\\plugins\\telemetry_hook_bundle.js'\n");
+  process.stdout.write('I am currently blocked from inspecting your files because every tool execution is failing at the environment hook level. Please fix the hook and ask again.');
+} else if (mode === 'untrusted') {
+  process.stderr.write('Gemini CLI is not running in a trusted directory. To proceed, either use `--skip-trust`, set the `GEMINI_CLI_TRUST_WORKSPACE=true` environment variable, or trust this directory in interactive mode.\n');
+  process.exit(55);
+} else if (mode.startsWith('sleep:')) {
+  setTimeout(() => process.stdout.write('woke'), Number(mode.slice(6)));
 } else if (mode.startsWith('env:')) {
   process.stdout.write(process.env[mode.slice(4)] ?? '(unset)');
 } else {

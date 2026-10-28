@@ -1,5 +1,5 @@
 import type { OllamaAgentConfig } from '../config.js';
-import { type Agent, type AgentResult, type RunOptions, failed, truncate } from './types.js';
+import { type Agent, type AgentResult, type RunOptions, effectiveTimeout, failed, truncate } from './types.js';
 
 const DEFAULT_BASE_URL = 'http://127.0.0.1:11434';
 
@@ -60,7 +60,7 @@ export class OllamaAgent implements Agent {
         `API and cannot read files. Inline the content you want it to see in the prompt, or ` +
         `delegate to an agent that list_agents reports with "readsFiles": true.`
       : '';
-    const timeoutMs = this.config.timeoutMs ?? 300_000;
+    const timeoutMs = effectiveTimeout(this.config.timeoutMs, options);
 
     let model = this.config.model;
     if (!model) {

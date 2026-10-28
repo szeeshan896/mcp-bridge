@@ -3,7 +3,9 @@ import { BrokenAgent } from './broken.js';
 import { CliAgent } from './cli.js';
 import { OllamaAgent } from './ollama.js';
 import { OpenAiAgent } from './openai.js';
-import type { Agent } from './types.js';
+import { HealthStore, type AgentState } from './health.js';
+import { classifyFailure, selfReportedFailure } from './outcome.js';
+import type { Agent, AgentResult } from './types.js';
 
 export interface AgentStatus {
   name: string;
@@ -15,18 +17,45 @@ export interface AgentStatus {
    * listing, so a signed-out CLI lists as available and explains itself when asked.
    */
   available: boolean;
+  /**
+   * What to expect from a call, combining the probe with what earlier calls showed:
+   * "ready", "unavailable" (not installed or not configured), or a remembered durable
+   * failure -- "quota-exhausted", "sign-in-failed", "directory-not-trusted". Anything but
+   * "ready" also makes `available` false.
+   */
+  status: AgentState;
   /** whether pointing it at a directory actually lets it read those files */
   readsFiles: boolean;
   detail: string;
+  /** the most recent failed call, if any, and when; ISO timestamps */
+  lastError?: string;
+  lastErrorAt?: string;
+  /** when the agent said, e.g., "try again at 4:22 AM" */
+  retryAt?: string;
+  lastSuccessAt?: string;
+  calls: number;
 }
 
 export class AgentRegistry {
   private readonly agents = new Map<string, Agent>();
 
-  constructor(config: Config) {
+  /**
+   * The health store is passed in so it can outlive a registry: the control panel rebuilds
+   * the registry whenever the config changes, and what was learned must survive that.
+   */
+  private readonly misconfigured = new Map<string, string>();
+
+  constructor(config: Config, readonly health: HealthStore = new HealthStore()) {
     for (const [name, agentConfig] of Object.entries(config.agents)) {
-      this.agents.set(name.toLowerCase(), build(name.toLowerCase(), agentConfig, config.maxOutputChars));
+      const agent = build(name.toLowerCase(), agentConfig, config.maxOutputChars);
+      if (agent instanceof BrokenAgent) this.misconfigured.set(agent.name, agent.reason);
+      this.agents.set(name.toLowerCase(), tracked(agent, health));
     }
+  }
+
+  /** Why an agent's configuration was rejected, or null if it was accepted. */
+  configError(name: string): string | null {
+    return this.misconfigured.get(name.trim().toLowerCase()) ?? null;
   }
 
   find(name: string): Agent | undefined {
@@ -41,19 +70,89 @@ export class AgentRegistry {
   async statuses(): Promise<AgentStatus[]> {
     const probed = await Promise.all(
       [...this.agents.values()].map(async (agent) => {
-        const { available, detail } = await agent.probe();
-        return {
+        const probe = await agent.probe();
+        const status = this.health.state(agent.name, probe.available);
+        const health = this.health.get(agent.name);
+        const failure = health?.lastFailure;
+        const remembered = status !== 'ready' && status !== 'unavailable' && failure
+          ? `${STATE_TEXT[status]} on the last call (${new Date(failure.at).toISOString()}): ${failure.message}${failure.retryAt ? ` -- it said to try again ${failure.retryAt}` : ''}`
+          : null;
+        const result: AgentStatus = {
           name: agent.name,
           description: agent.description,
           requires: agent.requires,
-          available,
+          available: status === 'ready',
+          status,
           readsFiles: agent.readsFiles,
-          detail,
+          detail: remembered ?? probe.detail,
+          calls: health?.calls ?? 0,
         };
+        if (failure) {
+          result.lastError = failure.message;
+          result.lastErrorAt = new Date(failure.at).toISOString();
+          if (failure.retryAt) result.retryAt = failure.retryAt;
+        }
+        if (health?.lastSuccessAt) result.lastSuccessAt = new Date(health.lastSuccessAt).toISOString();
+        return result;
       }),
     );
     return probed.sort((a, b) => a.name.localeCompare(b.name));
   }
+}
+
+const STATE_TEXT: Record<AgentState, string> = {
+  ready: 'ready',
+  unavailable: 'unavailable',
+  'quota-exhausted': 'usage limit reached',
+  'sign-in-failed': 'sign-in failed',
+  'directory-not-trusted': 'refused the working directory',
+};
+
+/**
+ * Every run goes through here, so whichever front door a call came in by, the result is
+ * read the same way: an agent that exited 0 but says it could not do the work is a
+ * failure, and every outcome is remembered for list_agents.
+ */
+function tracked(agent: Agent, health: HealthStore): Agent {
+  return {
+    get name() { return agent.name; },
+    get description() { return agent.description; },
+    get requires() { return agent.requires; },
+    get readsFiles() { return agent.readsFiles; },
+    probe: () => agent.probe(),
+    run: async (prompt, options) => {
+      const result = await agent.run(prompt, options);
+      const judged = judge(agent.name, result);
+      health.record(agent.name, judged);
+      return judged;
+    },
+  };
+}
+
+function judge(name: string, result: AgentResult): AgentResult {
+  if (result.succeeded) {
+    const admitted = selfReportedFailure(result.output);
+    if (!admitted) return result;
+    return {
+      ...result,
+      succeeded: false,
+      diagnostics:
+        `${name} exited normally, but its answer says it could not do the task: "${admitted}" ` +
+        'Treat "output" as its explanation, not as a result.',
+    };
+  }
+  if (classifyFailure(result.diagnostics).kind === 'trust') {
+    return {
+      ...result,
+      diagnostics:
+        `${result.diagnostics}\n\nThis CLI refuses directories it has not been told to trust when it runs ` +
+        'unattended. mcpbridge does not trust them on its behalf, because the directory is chosen by ' +
+        'whichever client made the call. If you trust the projects your clients send it to, set the ' +
+        'variable the CLI names under this agent\'s "env" in config.json, e.g. ' +
+        '"env": { "GEMINI_CLI_TRUST_WORKSPACE": "true" } for gemini.',
+    };
+  }
+  return result;
 }
 
 /**

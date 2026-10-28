@@ -1,5 +1,5 @@
 import type { OpenAiAgentConfig } from '../config.js';
-import { type Agent, type AgentResult, type RunOptions, failed, truncate } from './types.js';
+import { type Agent, type AgentResult, type RunOptions, effectiveTimeout, failed, truncate } from './types.js';
 
 interface ChatCompletion {
   choices?: { message?: { content?: string }; finish_reason?: string }[];
@@ -96,7 +96,7 @@ export class OpenAiAgent implements Agent {
         `agent that list_agents reports with "readsFiles": true.`
       : '';
 
-    const timeoutMs = this.config.timeoutMs ?? 300_000;
+    const timeoutMs = effectiveTimeout(this.config.timeoutMs, options);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {

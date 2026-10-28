@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { dirname } from 'node:path';
 
-import { BrokenAgent } from '../agents/broken.js';
+import { HealthStore } from '../agents/health.js';
 import { AgentRegistry } from '../agents/registry.js';
 import { DEFAULT_CONFIG, configPath, loadConfig, type AgentConfig } from '../config.js';
 import { connectToRelay } from '../connect.js';
@@ -65,10 +65,13 @@ export async function startUi(options: UiOptions): Promise<UiServer> {
   let secrets: Secrets = loadSecrets(secretsFile);
   applySecretsToEnv(secrets);
 
+  // outlives every rebuild of the registry, so editing an agent does not forget what
+  // earlier calls learned about the others
+  const health = new HealthStore();
   const context: ToolContext = (() => {
     const { config } = loadConfig(configFile);
     const limit = new ConcurrencyLimit(config.maxConcurrent);
-    return { registry: new AgentRegistry(config), tasks: new TaskStore(limit), limit };
+    return { registry: new AgentRegistry(config, health), tasks: new TaskStore(limit), limit };
   })();
 
   let connection: ConnectionState = { state: 'stopped' };
@@ -91,7 +94,7 @@ export async function startUi(options: UiOptions): Promise<UiServer> {
   /** Rebuilds the agents from the file; a live connection is restarted so the relay sees them. */
   const reload = () => {
     const { config } = loadConfig(configFile);
-    context.registry = new AgentRegistry(config);
+    context.registry = new AgentRegistry(config, health);
     statusCache = undefined;
     if (connectionController) startConnection();
   };
@@ -238,8 +241,8 @@ export async function startUi(options: UiOptions): Promise<UiServer> {
     }
 
     // the same construction the bridge does, so a config it would reject is refused here
-    const probe = new AgentRegistry({ ...DEFAULT_CONFIG, agents: { [name]: agent } }).find(name);
-    if (probe instanceof BrokenAgent) throw new Error(probe.reason);
+    const rejected = new AgentRegistry({ ...DEFAULT_CONFIG, agents: { [name]: agent } }).configError(name);
+    if (rejected) throw new Error(rejected);
 
     const file = readFile();
     file['agents'] = { ...((file['agents'] ?? {}) as Record<string, unknown>), [name]: agent };
@@ -273,7 +276,10 @@ export async function startUi(options: UiOptions): Promise<UiServer> {
     const agent = context.registry.find(name);
     if (!agent) throw new Error(`no agent named "${name}"`);
     const prompt = typeof body['prompt'] === 'string' && body['prompt'].trim() ? body['prompt'].trim() : TEST_PROMPT;
-    return context.limit.run(() => agent.run(prompt, {}));
+    const result = await context.limit.run(() => agent.run(prompt, {}));
+    // what the test learned belongs in the next listing, not one cached from before it
+    statusCache = undefined;
+    return result;
   };
 
   const listModels = async (body: Record<string, unknown>) => {

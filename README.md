@@ -46,7 +46,31 @@ tokens spent, an answer cut short at the model's output limit.
 
 `ask_agent` is the normal path. The agent you delegate to starts fresh: it cannot see your
 conversation or your files, so write a self-contained prompt and pass `workingDirectory`
-whenever the task is about code.
+whenever the task is about code. `timeoutSeconds` bounds one call; it can only shorten the
+agent's own timeout, which is five minutes unless configured.
+
+### What the fields promise
+
+- **`succeeded`** means the agent did the work as far as the bridge can tell — not merely
+  that its process exited 0. An agent that exits normally but says, in its own answer, that
+  it could not read or run anything (a broken hook blocking every tool call is the case
+  that prompted this) comes back `succeeded: false`, its explanation quoted in
+  `diagnostics` and kept in `output`. Errors a CLI printed while still exiting 0 land in
+  `notes`, with a warning to check the answer.
+- **`available`** is true only when the agent can be started *and* no recent call hit a
+  durable failure. **`status`** says which: `ready`, `unavailable` (not installed or not
+  configured), or what an earlier call ran into — `quota-exhausted`, `sign-in-failed`,
+  `directory-not-trusted` — with `lastError`, `lastErrorAt` and, when the agent named one,
+  `retryAt`. A quota failure is remembered for an hour, a sign-in one for six, and any
+  success clears it. `calls: 0` means the agent has not been tried: its command exists,
+  but whether its account works is unproven until the first call.
+- **`diagnostics`** is short: the caller's own prompt is removed when a CLI echoes it, a
+  repeated line appears once, and long output keeps the error lines ahead of the banner.
+
+The bridge does not mark directories as trusted on a CLI's behalf. Gemini CLI, for one,
+refuses an untrusted directory when unattended; the directory comes from whichever client
+made the call, so the diagnostic names the variable to set in that agent's `env` if you
+trust what your clients send it to, rather than setting it for you.
 
 ## Check what you have
 
@@ -382,7 +406,7 @@ with the path to set by hand, so an unrecognised one never produces a wrong comm
 
 ```bash
 npm install
-npm test          # typecheck + 92 tests
+npm test          # typecheck + 98 tests
 npm run build
 npm start         # stdio, from source
 ```

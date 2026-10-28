@@ -1,4 +1,5 @@
 import type { AgentRegistry } from './agents/registry.js';
+import type { RunOptions } from './agents/types.js';
 import type { ConcurrencyLimit } from './limit.js';
 import type { TaskStore } from './tasks.js';
 
@@ -21,6 +22,8 @@ export interface DelegationArgs {
   agent: string;
   prompt: string;
   workingDirectory?: string;
+  /** the caller's bound on this one call; only ever shortens the agent's own timeout */
+  timeoutSeconds?: number;
 }
 
 export async function executeTool(
@@ -33,18 +36,17 @@ export async function executeTool(
       return registry.statuses();
 
     case 'ask_agent': {
-      const { agent, prompt, workingDirectory } = delegation(args);
-      const target = registry.find(agent);
-      if (!target) return unknownAgent(agent, registry);
-      const options = workingDirectory ? { cwd: workingDirectory } : {};
-      return limit.run(() => target.run(prompt, options));
+      const parsed = delegation(args);
+      const target = registry.find(parsed.agent);
+      if (!target) return unknownAgent(parsed.agent, registry);
+      return limit.run(() => target.run(parsed.prompt, runOptions(parsed)));
     }
 
     case 'start_task': {
-      const { agent, prompt, workingDirectory } = delegation(args);
-      const target = registry.find(agent);
-      if (!target) return { started: false, ...unknownAgent(agent, registry) };
-      const task = tasks.start(target, prompt, workingDirectory ? { cwd: workingDirectory } : {});
+      const parsed = delegation(args);
+      const target = registry.find(parsed.agent);
+      if (!target) return { started: false, ...unknownAgent(parsed.agent, registry) };
+      const task = tasks.start(target, parsed.prompt, runOptions(parsed));
       return { started: true, id: task.id, agent: task.agent, status: task.status };
     }
 
@@ -64,7 +66,19 @@ function delegation(args: Record<string, unknown>): DelegationArgs {
   const agent = String(args['agent'] ?? '');
   const prompt = String(args['prompt'] ?? '');
   const wd = args['workingDirectory'];
-  return { agent, prompt, ...(typeof wd === 'string' && wd ? { workingDirectory: wd } : {}) };
+  const seconds = Number(args['timeoutSeconds']);
+  return {
+    agent, prompt,
+    ...(typeof wd === 'string' && wd ? { workingDirectory: wd } : {}),
+    ...(Number.isFinite(seconds) && seconds > 0 ? { timeoutSeconds: Math.min(seconds, 3_600) } : {}),
+  };
+}
+
+function runOptions(args: DelegationArgs): RunOptions {
+  return {
+    ...(args.workingDirectory ? { cwd: args.workingDirectory } : {}),
+    ...(args.timeoutSeconds ? { timeoutMs: args.timeoutSeconds * 1000 } : {}),
+  };
 }
 
 function unknownAgent(agent: string, registry: AgentRegistry) {
