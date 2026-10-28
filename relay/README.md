@@ -59,7 +59,9 @@ Google reports the address verified.
 ## Deploy
 
 The repository root has a `Dockerfile` that builds the whole thing and a `fly.toml`. The
-image runs as an unprivileged user, keeps its database at `/data`, and answers `/healthz`.
+image keeps its database at `/data` and answers `/healthz`. It starts as root only to take
+ownership of whatever volume is mounted at `/data` (Railway's arrive owned by root), then
+switches to the unprivileged `node` user before opening the database or a port.
 
 **Fly.io**
 
