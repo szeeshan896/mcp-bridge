@@ -1,0 +1,23 @@
+# fly launch --no-deploy   (then edit app/region)   ·   fly secrets set SESSION_SECRET=$(openssl rand -base64 32)
+# fly volumes create data --size 1   ·   fly deploy
+app = "mcpbridge-relay"
+primary_region = "sin"
+
+[build]
+
+[env]
+  PORT = "8080"
+  # must match the app's public hostname: cookies, CSRF and the Google callback depend on it
+  PUBLIC_URL = "https://mcpbridge-relay.fly.dev"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # agents hold a WebSocket open; a machine that stops when idle would drop every one of them
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[mounts]]
+  source = "data"
+  destination = "/data"

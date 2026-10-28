@@ -31,6 +31,39 @@ jobs:
 
       - run: npm test
 
+  relay:
+    name: relay (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      # the relay depends on the CLI package by path, so that is built first
+      - run: npm ci
+      - run: npm ci
+        working-directory: relay
+      - run: npm test
+        working-directory: relay
+
+  image:
+    name: relay image boots
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: docker build -t mcpbridge-relay .
+      - name: the container answers /healthz
+        run: |
+          docker run -d --name relay -p 8080:8080 -e SESSION_SECRET=ci-only mcpbridge-relay
+          for i in $(seq 1 30); do curl -fs http://127.0.0.1:8080/healthz && break; sleep 1; done
+          curl -fs http://127.0.0.1:8080/healthz | grep -q '"ok":true'
+          docker logs relay
+
   package:
     name: package contents
     runs-on: ubuntu-latest

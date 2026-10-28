@@ -1,0 +1,10 @@
+.git
+node_modules
+dist
+relay/node_modules
+relay/dist
+data
+test
+relay/test
+.github
+*.md

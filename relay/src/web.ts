@@ -207,7 +207,7 @@ function dashboardPage(me: Summary, base: string, googleEnabled: boolean): strin
 <p class="muted">claude.ai (web and phone) needs OAuth on the connector side; that is the next thing this relay will support.</p>`;
 
   return page('Dashboard', `
-<h1>mcpbridge</h1><p class="sub">${esc(me.username)}${me.googleLinked ? ' · Google linked' : ''}${googleEnabled && !me.googleLinked ? ' · <a href="/auth/google">link Google</a>' : ''} · <form method="post" action="/logout" style="display:inline"><button class="secondary" style="margin:0;padding:2px 8px">Sign out</button></form></p>
+<h1>mcpbridge</h1><div class="sub">${esc(me.username)}${me.googleLinked ? ' · Google linked' : ''}${googleEnabled && !me.googleLinked ? ' · <a href="/auth/google">link Google</a>' : ''} · <form method="post" action="/logout" style="display:inline"><button class="secondary" style="margin:0;padding:2px 8px">Sign out</button></form></div>
 <div class="panel"><h2 style="margin-top:0">Your machine</h2>${device}</div>
 <div class="row">${tokenRow('agent', 'Agent token', 'Lets a machine serve your account. Keep it on that machine only.')}${tokenRow('client', 'Client token', 'Lets a client delegate as you. Put it in Claude Code, Desktop or Cursor.')}</div>
 <div class="panel"><h2 style="margin-top:0">2-step verification</h2>${twoFactor}</div>
