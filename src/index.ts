@@ -124,6 +124,16 @@ async function main(): Promise<void> {
   }
 
   const httpIndex = argv.indexOf('--http');
+  // anything left over is a mistake -- a typo, or a command this version does not have yet.
+  // Falling through to the stdio server would look like it worked while doing nothing asked.
+  const leftover = httpIndex === -1 ? argv : argv.filter((_, i) => i !== httpIndex && i !== httpIndex + 1);
+  if (leftover.length > 0) {
+    console.error(`mcpbridge: unknown command or option: ${leftover.join(' ')}`);
+    console.error('Run `mcpbridge --help` for the commands this version has. An older checkout may');
+    console.error('not have them yet: update it (git pull, then npm install) or use npx -y mcpbridge.');
+    process.exitCode = 2;
+    return;
+  }
   if (httpIndex === -1) {
     // stdio: the transport owns stdout, so every diagnostic must go to stderr or it
     // corrupts the protocol stream

@@ -354,7 +354,7 @@ with the path to set by hand, so an unrecognised one never produces a wrong comm
 
 ```bash
 npm install
-npm test          # typecheck + 85 tests
+npm test          # typecheck + 87 tests
 npm run build
 npm start         # stdio, from source
 ```
