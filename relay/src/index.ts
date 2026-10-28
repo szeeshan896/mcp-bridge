@@ -8,6 +8,7 @@ import { Db } from './db.js';
 import { DeviceHub } from './hub.js';
 import { RateLimiter, sendJson } from './http.js';
 import { handleMcp } from './mcp.js';
+import type { exchangeCode } from './google.js';
 import { handleWeb } from './web.js';
 
 export interface RelayConfig {
@@ -16,6 +17,8 @@ export interface RelayConfig {
   publicUrl?: string;
   googleClientId?: string;
   googleClientSecret?: string;
+  /** replaces the call to Google in tests */
+  googleExchange?: typeof exchangeCode;
   log?: (line: string) => void;
 }
 
@@ -38,10 +41,15 @@ export function createRelay(config: RelayConfig): Relay {
     publicUrl: config.publicUrl,
     secureCookies: config.publicUrl?.startsWith('https://') ?? false,
     loginLimiter: new RateLimiter(10, 60_000),
+    totpUsed: new Map(),
     log,
   };
   const google = config.googleClientId && config.googleClientSecret
-    ? { clientId: config.googleClientId, clientSecret: config.googleClientSecret }
+    ? {
+        clientId: config.googleClientId,
+        clientSecret: config.googleClientSecret,
+        ...(config.googleExchange ? { exchange: config.googleExchange } : {}),
+      }
     : undefined;
 
   const server = createServer((req, res) => {

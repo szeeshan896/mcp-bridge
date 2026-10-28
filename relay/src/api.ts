@@ -1,11 +1,13 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
-import { bearerFrom, hashPassword, newId, newToken, signSession, verifyPassword, verifySession } from './auth.js';
+import { bearerFrom, hashPassword, hashToken, newId, newToken, signSession, verifyPassword, verifySession } from './auth.js';
 import type { Db, TokenKind, User } from './db.js';
 import type { DeviceHub } from './hub.js';
 import { clientAddress, cookieHeader, originAllowed, parseCookies, parseFields, readBody, sendJson, type RateLimiter } from './http.js';
 import { normalizeUsername } from './identity.js';
 import { sendToAgent } from './agentSocket.js';
+import { newRecoveryCodes, newTotpSecret, normalizeRecoveryCode, otpauthUri, verifyTotp } from './totp.js';
+import { toString as qrToString } from 'qrcode';
 
 export const SESSION_COOKIE = 'mcpbridge_session';
 /** after a correct password, before a correct 2FA code */
@@ -19,7 +21,25 @@ export interface ApiContext {
   publicUrl: string | undefined;
   secureCookies: boolean;
   loginLimiter: RateLimiter;
+  /** the last TOTP counter each user passed with, so a code cannot be replayed inside its window */
+  totpUsed: Map<string, number>;
   log: (line: string) => void;
+}
+
+/**
+ * Accepts an authenticator code or a recovery code for a user with 2FA on. A TOTP counter
+ * is remembered so the same code is refused a second time; a recovery code is burned.
+ */
+export function passesSecondFactor(user: User, input: string, ctx: ApiContext): boolean {
+  if (!user.totpSecret || user.totpEnabledAt === null) return false;
+  const counter = verifyTotp(user.totpSecret, input);
+  if (counter !== null) {
+    if ((ctx.totpUsed.get(user.id) ?? -1) >= counter) return false;
+    ctx.totpUsed.set(user.id, counter);
+    return true;
+  }
+  const normalized = normalizeRecoveryCode(input);
+  return normalized.length === 8 && ctx.db.consumeRecoveryCode(user.id, hashToken(normalized));
 }
 
 export function currentUser(req: IncomingMessage, ctx: ApiContext): User | null {
@@ -64,8 +84,8 @@ export function accountSummary(user: User, ctx: ApiContext) {
     twoFactorEnabled: user.totpEnabledAt !== null,
     recoveryCodesLeft: user.totpEnabledAt !== null ? ctx.db.unusedRecoveryCodeCount(user.id) : 0,
     device: device
-      ? { online: true, name: device.name, agentVersion: device.agentVersion, connectedAt: device.connectedAt, agents: device.agents }
-      : { online: false },
+      ? { online: true as const, name: device.name, agentVersion: device.agentVersion, connectedAt: device.connectedAt, agents: device.agents }
+      : { online: false as const },
     tokens: {
       agent: ctx.db.tokenInfo(user.id, 'agent'),
       client: ctx.db.tokenInfo(user.id, 'client'),
@@ -136,10 +156,70 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, ctx: 
       return true;
     }
 
+    case 'POST /api/login/2fa': {
+      if (!ctx.loginLimiter.allow(clientAddress(req))) return tooMany(res);
+      const user = pendingUser(req, ctx);
+      if (!user) return bad(res, 'sign in with your password first', 401);
+      if (!passesSecondFactor(user, fields['code'] ?? '', ctx)) return bad(res, 'that code is not right', 401);
+      setSessionCookie(res, user.id, ctx);
+      sendJson(res, 200, accountSummary(user, ctx));
+      return true;
+    }
+
     case 'POST /api/logout':
       clearSessionCookie(res, ctx);
       sendJson(res, 200, { ok: true });
       return true;
+
+    case 'POST /api/2fa/setup': {
+      const user = currentUser(req, ctx);
+      if (!user) return bad(res, 'not signed in', 401);
+      if (user.totpEnabledAt !== null) return bad(res, '2-step verification is already on', 409);
+      const secret = newTotpSecret();
+      ctx.db.setTotp(user.id, secret, null);
+      const otpauth = otpauthUri(secret, user.username);
+      const qrSvg = await qrToString(otpauth, { type: 'svg', margin: 1 });
+      sendJson(res, 200, { secret, otpauth, qrSvg });
+      return true;
+    }
+
+    case 'POST /api/2fa/enable': {
+      const user = currentUser(req, ctx);
+      if (!user) return bad(res, 'not signed in', 401);
+      if (user.totpEnabledAt !== null) return bad(res, '2-step verification is already on', 409);
+      if (!user.totpSecret) return bad(res, 'start setup first');
+      const counter = verifyTotp(user.totpSecret, fields['code'] ?? '');
+      if (counter === null) return bad(res, 'that code is not right — check the time on your phone', 401);
+      ctx.totpUsed.set(user.id, counter);
+      ctx.db.setTotp(user.id, user.totpSecret, Date.now());
+      const recoveryCodes = newRecoveryCodes();
+      ctx.db.replaceRecoveryCodes(user.id, recoveryCodes.map((c) => hashToken(normalizeRecoveryCode(c))));
+      sendJson(res, 200, { enabled: true, recoveryCodes, note: 'shown once — keep these somewhere safe' });
+      return true;
+    }
+
+    case 'POST /api/2fa/disable': {
+      const user = currentUser(req, ctx);
+      if (!user) return bad(res, 'not signed in', 401);
+      if (user.totpEnabledAt === null) return bad(res, '2-step verification is not on');
+      if (!passesSecondFactor(user, fields['code'] ?? '', ctx)) return bad(res, 'a current code is needed to turn it off', 401);
+      ctx.db.setTotp(user.id, null, null);
+      ctx.db.replaceRecoveryCodes(user.id, []);
+      ctx.totpUsed.delete(user.id);
+      sendJson(res, 200, { enabled: false });
+      return true;
+    }
+
+    case 'POST /api/2fa/recovery-codes': {
+      const user = currentUser(req, ctx);
+      if (!user) return bad(res, 'not signed in', 401);
+      if (user.totpEnabledAt === null) return bad(res, '2-step verification is not on');
+      if (!passesSecondFactor(user, fields['code'] ?? '', ctx)) return bad(res, 'a current code is needed', 401);
+      const recoveryCodes = newRecoveryCodes();
+      ctx.db.replaceRecoveryCodes(user.id, recoveryCodes.map((c) => hashToken(normalizeRecoveryCode(c))));
+      sendJson(res, 200, { recoveryCodes, note: 'the previous codes no longer work' });
+      return true;
+    }
 
     case 'GET /api/me': {
       const user = currentUser(req, ctx);
