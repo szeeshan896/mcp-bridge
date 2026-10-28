@@ -17,6 +17,11 @@ export interface AgentHealth {
   failures: number;
   lastSuccessAt?: number;
   lastFailure?: { kind: FailureKind; message: string; at: number; retryAt?: string };
+  /**
+   * Which came last, by order of recording rather than by clock: two calls can finish in
+   * the same millisecond, and a success recorded after a failure must still clear it.
+   */
+  lastWasFailure: boolean;
 }
 
 /** How long a failure keeps an agent marked unusable when no success has cleared it. */
@@ -33,11 +38,13 @@ export class HealthStore {
   private readonly byAgent = new Map<string, AgentHealth>();
 
   record(name: string, result: AgentResult, now = Date.now()): void {
-    const health = this.byAgent.get(name) ?? { calls: 0, failures: 0 };
+    const health = this.byAgent.get(name) ?? { calls: 0, failures: 0, lastWasFailure: false };
     health.calls += 1;
     if (result.succeeded) {
       health.lastSuccessAt = now;
+      health.lastWasFailure = false;
     } else if (!result.timedOut) {
+      health.lastWasFailure = true;
       // a timeout says the task was big, not that the agent is broken
       health.failures += 1;
       const { kind, retryAt } = classifyFailure(result.diagnostics);
@@ -54,9 +61,9 @@ export class HealthStore {
   /** The state a caller should act on: a durable failure newer than the last success wins. */
   state(name: string, probedAvailable: boolean, now = Date.now()): AgentState {
     if (!probedAvailable) return 'unavailable';
-    const failure = this.byAgent.get(name)?.lastFailure;
-    const success = this.byAgent.get(name)?.lastSuccessAt ?? 0;
-    if (!failure || failure.at < success) return 'ready';
+    const health = this.byAgent.get(name);
+    const failure = health?.lastFailure;
+    if (!failure || !health.lastWasFailure) return 'ready';
     if (now - failure.at > REMEMBER_MS[failure.kind]) return 'ready';
     switch (failure.kind) {
       case 'quota': return 'quota-exhausted';

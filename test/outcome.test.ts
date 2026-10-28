@@ -62,8 +62,10 @@ test('a quota failure: lean diagnostics, then remembered by list_agents until a 
   assert.match(after.lastError!, /exited with code 1/);
   assert.ok(after.lastErrorAt);
 
-  // a later success, however it came, makes it ready again
-  health.record('codexish', { agent: 'codexish', succeeded: true, output: 'ok', diagnostics: '', notes: '', durationMs: 1, timedOut: false, outputTruncated: false });
+  // a later success clears it -- even one that lands in the same millisecond, which is
+  // what CI's fast runners did to an earlier version that compared timestamps
+  const failedAt = Date.parse(after.lastErrorAt!);
+  health.record('codexish', { agent: 'codexish', succeeded: true, output: 'ok', diagnostics: '', notes: '', durationMs: 1, timedOut: false, outputTruncated: false }, failedAt);
   const healed = await status('codexish');
   assert.equal(healed.status, 'ready');
   assert.equal(healed.available, true);
