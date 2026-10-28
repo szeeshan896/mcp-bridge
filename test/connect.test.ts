@@ -48,7 +48,12 @@ async function fakeRelay() {
   };
   return {
     url: `http://127.0.0.1:${port}`, sockets, authHeaders, inbox, waitFor,
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    // the http server underneath only reports closed once every connection is gone, so a
+    // client still mid-handshake would hold the test open; dropping them first cannot hang
+    close: () => new Promise<void>((resolve) => {
+      for (const socket of server.clients) socket.terminate();
+      server.close(() => resolve());
+    }),
   };
 }
 

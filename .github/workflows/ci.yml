@@ -12,6 +12,8 @@ jobs:
   test:
     name: test (node ${{ matrix.node }}, ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # a hung test file would otherwise hold the job for the six-hour default
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -34,6 +36,7 @@ jobs:
   relay:
     name: relay (node ${{ matrix.node }})
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:

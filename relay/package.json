@@ -11,7 +11,7 @@
     "build": "tsc",
     "start": "node --no-warnings=ExperimentalWarning dist/index.js",
     "dev": "tsx --no-warnings=ExperimentalWarning src/index.ts",
-    "test": "tsc --noEmit && node --no-warnings=ExperimentalWarning --test --import tsx \"test/**/*.test.ts\""
+    "test": "tsc --noEmit && node --no-warnings=ExperimentalWarning --test --test-timeout=60000 --test-force-exit --import tsx \"test/**/*.test.ts\""
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",

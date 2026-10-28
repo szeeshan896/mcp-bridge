@@ -35,7 +35,7 @@
   "scripts": {
     "build": "tsc",
     "prepare": "npm run build",
-    "test": "tsc --noEmit && node --test --import tsx \"test/**/*.test.ts\"",
+    "test": "tsc --noEmit && node --test --test-timeout=60000 --test-force-exit --import tsx \"test/**/*.test.ts\"",
     "start": "tsx src/index.ts"
   },
   "dependencies": {
