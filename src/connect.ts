@@ -20,6 +20,8 @@ export interface ConnectOptions {
   signal?: AbortSignal;
   /** how often to push a fresh agent list while connected */
   refreshMs?: number;
+  /** told when the relay welcomes this machine and when the session ends */
+  onState?: (state: { connected: true; device: string } | { connected: false; reason: string }) => void;
 }
 
 const MIN_BACKOFF_MS = 1_000;
@@ -84,6 +86,7 @@ async function runSession(
     const finish = (outcome: SessionOutcome) => {
       if (settled) return;
       settled = true;
+      options.onState?.({ connected: false, reason: outcome.reason });
       if (refreshTimer) clearInterval(refreshTimer);
       options.signal?.removeEventListener('abort', onAbort);
       resolve(outcome);
@@ -117,6 +120,7 @@ async function runSession(
         case 'welcome':
           welcomed = true;
           log(`relay: connected as device "${message.device}"`);
+          options.onState?.({ connected: true, device: message.device });
           return;
         case 'goodbye':
           log(`relay: ${message.reason}`);

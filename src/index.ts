@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { spawn } from 'node:child_process';
 import { createServer as createHttpServer } from 'node:http';
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -7,6 +8,8 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { AgentRegistry } from './agents/registry.js';
 import { configPath, loadConfig } from './config.js';
 import { connectToRelay } from './connect.js';
+import { applySecretsToEnv, loadSecrets, type Secrets } from './secrets.js';
+import { startUi } from './ui/server.js';
 import { ConcurrencyLimit } from './limit.js';
 import { createServer } from './server.js';
 import { TaskStore } from './tasks.js';
@@ -27,6 +30,10 @@ const USAGE = `mcpbridge - delegate work to another AI agent over MCP
                              delegate once from the terminal, to check an agent works
                              before wiring it into a client
   mcpbridge --example-config print a starter config; JSON on stdout, notes on stderr
+  mcpbridge ui [--port N] [--no-open]
+                             open a control panel on this computer: add agents and
+                             their keys, test them, connect to the relay, all without
+                             a terminal
   mcpbridge connect --relay <url> --token <token> [--device <name>]
                              keep this machine connected to a hosted relay, so clients
                              anywhere can delegate to the CLIs signed in here
@@ -48,6 +55,33 @@ async function main(): Promise<void> {
 
   if (argv.includes('--example-config')) {
     printExampleConfig();
+    return;
+  }
+
+  // keys and the relay token saved from `mcpbridge ui` work in every command and window
+  let secrets: Secrets = { keys: {} };
+  try {
+    secrets = loadSecrets();
+    applySecretsToEnv(secrets);
+  } catch (error) {
+    console.error(`ignoring saved keys: ${(error as Error).message}`);
+  }
+
+  if (argv[0] === 'ui') {
+    const portFlag = flag(argv, '--port');
+    const port = portFlag === undefined ? 8809 : Number(portFlag);
+    if (!Number.isInteger(port) || port < 0 || port > 65535) {
+      console.error(`not a usable port: ${portFlag}`);
+      process.exitCode = 1;
+      return;
+    }
+    const ui = await startUi({ port, agentVersion: VERSION });
+    console.error(`mcpbridge control panel: ${ui.url}`);
+    console.error('Keep this window open while you use it; Ctrl+C stops the page and the relay connection.');
+    if (!argv.includes('--no-open')) openInBrowser(ui.url);
+    const stop = () => void ui.close().then(() => process.exit(0));
+    process.on('SIGINT', stop);
+    process.on('SIGTERM', stop);
     return;
   }
 
@@ -99,12 +133,13 @@ async function main(): Promise<void> {
   }
 
   if (argv[0] === 'connect') {
-    const relay = flag(argv, '--relay') ?? process.env['MCPBRIDGE_RELAY'];
-    const token = flag(argv, '--token') ?? process.env['MCPBRIDGE_TOKEN'];
-    const device = flag(argv, '--device') ?? process.env['MCPBRIDGE_DEVICE'];
+    // flags, then the environment, then what `mcpbridge ui` saved
+    const relay = flag(argv, '--relay') ?? process.env['MCPBRIDGE_RELAY'] ?? secrets.relay?.url;
+    const token = flag(argv, '--token') ?? process.env['MCPBRIDGE_TOKEN'] ?? secrets.relay?.token;
+    const device = flag(argv, '--device') ?? process.env['MCPBRIDGE_DEVICE'] ?? secrets.relay?.device;
     if (!relay || !token) {
       console.error('usage: mcpbridge connect --relay <url> --token <token> [--device <name>]');
-      console.error('       (or set MCPBRIDGE_RELAY and MCPBRIDGE_TOKEN)');
+      console.error('       (or set MCPBRIDGE_RELAY and MCPBRIDGE_TOKEN, or save them once in `mcpbridge ui`)');
       process.exitCode = 1;
       return;
     }
@@ -222,6 +257,24 @@ function printExampleConfig(): void {
       '',
     ].join('\n'),
   );
+}
+
+/**
+ * Best effort: the address is printed either way. On Windows this goes through the URL
+ * protocol handler rather than `cmd /c start`, so nothing in the address meets cmd.exe.
+ */
+function openInBrowser(url: string): void {
+  const [command, args] =
+    process.platform === 'win32' ? ['rundll32', ['url.dll,FileProtocolHandler', url]]
+    : process.platform === 'darwin' ? ['open', [url]]
+    : ['xdg-open', [url]];
+  try {
+    const child = spawn(command, args as string[], { detached: true, stdio: 'ignore' });
+    child.on('error', () => { /* no browser to open; the printed link still works */ });
+    child.unref();
+  } catch {
+    // same
+  }
 }
 
 main().catch((error: unknown) => {

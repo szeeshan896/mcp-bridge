@@ -64,6 +64,34 @@ npx mcpbridge --agents
 Nothing to configure to get here — the four agents above are built in, and anything not
 installed is simply reported, never silently broken.
 
+## The control panel: no terminal needed
+
+```bash
+mcpbridge ui          # or, on Windows, double-click start-ui.cmd in the repository
+```
+
+opens a page on this computer — `http://127.0.0.1:8809` — that does what the rest of this
+README does with commands:
+
+- **Add an agent from a preset** — NVIDIA (free tier at build.nvidia.com), DeepSeek, Grok
+  through the Grok Build CLI or the xAI API, OpenRouter, Groq, Mistral, Ollama, or any
+  OpenAI-compatible endpoint or command-line agent. Paste the key, press **List models** to
+  see what it can reach, pick one, save.
+- **Test** any agent with a one-word prompt and see the answer or the exact error.
+- **Connect to the relay**: paste the agent token once; the page keeps this machine
+  online while it is open, comes back online by itself the next time you open it, and
+  pushes a newly added agent to the relay straight away.
+
+Keys and the agent token are saved in `secrets.json` next to `config.json`, never in
+`config.json` itself and never sent to the relay. Every `mcpbridge` command reads them,
+so a key saved here also works for `--ask`, and a bare `mcpbridge connect` uses the saved
+relay settings. A variable exported in the shell still wins over a saved key.
+
+The page answers only on 127.0.0.1 and only to the browser that opened the link printed
+in the terminal: that link carries a key made for this launch, swapped for an HttpOnly
+cookie on first load, and requests with another Host or Origin are refused, so a web page
+elsewhere cannot drive it through your browser.
+
 ## Adding or fixing an agent
 
 Write `~/.config/mcpbridge/config.json` (or point `MCPBRIDGE_CONFIG` elsewhere). Entries
@@ -354,7 +382,7 @@ with the path to set by hand, so an unrecognised one never produces a wrong comm
 
 ```bash
 npm install
-npm test          # typecheck + 87 tests
+npm test          # typecheck + 92 tests
 npm run build
 npm start         # stdio, from source
 ```

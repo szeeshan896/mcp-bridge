@@ -13,7 +13,7 @@ export class BrokenAgent implements Agent {
 
   constructor(
     readonly name: string,
-    private readonly reason: string,
+    readonly reason: string,
   ) {}
 
   get description(): string {

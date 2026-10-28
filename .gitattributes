@@ -1,0 +1,2 @@
+# cmd.exe needs CRLF; keep the launcher that way whatever the checkout settings
+*.cmd text eol=crlf
