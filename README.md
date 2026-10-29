@@ -141,7 +141,10 @@ README does with commands:
 - **Add an agent from a preset** — NVIDIA (free tier at build.nvidia.com), DeepSeek, Grok
   through the Grok Build CLI or the xAI API, OpenRouter, Groq, Mistral, Ollama, or any
   OpenAI-compatible endpoint or command-line agent. Paste the key, press **List models** to
-  see what it can reach, pick one, save.
+  see what it can reach, pick one, save. To keep several of a provider's models, tick them
+  under **Add several models at once**: each becomes its own agent on the same key, named
+  after its model (`nvidia-deepseek-v4-1-flash`, `nvidia-gemma-4-31b-it`), and saving over
+  a name already in use asks first.
 - **Test** any agent with a one-word prompt and see the answer or the exact error.
 - **Connect to the relay**: paste the agent token once; the page keeps this machine
   online while it is open, comes back online by itself the next time you open it, and
@@ -447,7 +450,7 @@ with the path to set by hand, so an unrecognised one never produces a wrong comm
 
 ```bash
 npm install
-npm test          # typecheck + 106 tests
+npm test          # typecheck + 108 tests
 npm run build
 npm start         # stdio, from source
 ```

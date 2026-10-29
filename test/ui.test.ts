@@ -10,7 +10,8 @@ import { WebSocketServer } from 'ws';
 
 import { parseAgentMessage, type AgentToRelay } from '../src/protocol.js';
 import { applySecretsToEnv, loadSecrets, maskSecret } from '../src/secrets.js';
-import { startUi, type UiServer } from '../src/ui/server.js';
+import type { AgentConfig } from '../src/config.js';
+import { agentNameFor, agentNamesFor, startUi, type UiServer } from '../src/ui/server.js';
 import { echoCommand } from './helpers.js';
 
 const cleanups: (() => Promise<void> | void)[] = [];
@@ -219,4 +220,42 @@ test('saved keys reach the environment without overriding one already exported',
   assert.equal(maskSecret('sk-abcdefgh1234'), '••••1234');
   assert.equal(maskSecret('short'), '••••');
   assert.equal(maskSecret(undefined), null);
+});
+
+test('several models from one provider become separate agents, none replacing another', async () => {
+  const { call, configFile } = await launch();
+  const key = 'nvapi-many-1234567890';
+  const provider = await fakeProvider(key);
+
+  const first = await call('/api/agents/save-many', {
+    name: 'nvidia', kind: 'openai', baseUrl: provider.baseUrl, apiKeyEnv: 'MCPBRIDGE_UITEST_MANY', apiKey: key,
+    models: ['deepseek-ai/deepseek-v4.1-flash', 'google/gemma-4-31b-it', 'meta/llama-a'],
+  });
+  assert.equal(first.status, 200, JSON.stringify(first.json));
+  assert.deepEqual(first.json['saved'], ['nvidia-deepseek-v4-1-flash', 'nvidia-gemma-4-31b-it', 'nvidia-llama-a']);
+
+  // again with one already there and one new: the existing one is updated, not duplicated
+  const second = await call('/api/agents/save-many', {
+    name: 'nvidia', kind: 'openai', baseUrl: provider.baseUrl, apiKeyEnv: 'MCPBRIDGE_UITEST_MANY',
+    models: ['google/gemma-4-31b-it', 'meta/llama-z'],
+  });
+  assert.deepEqual(second.json['saved'], ['nvidia-gemma-4-31b-it', 'nvidia-llama-z']);
+
+  const agents = JSON.parse(readFileSync(configFile, 'utf8')).agents;
+  assert.deepEqual(Object.keys(agents).sort(), ['nvidia-deepseek-v4-1-flash', 'nvidia-gemma-4-31b-it', 'nvidia-llama-a', 'nvidia-llama-z']);
+  assert.equal(agents['nvidia-llama-z'].model, 'meta/llama-z');
+  assert.equal(agents['nvidia-llama-z'].apiKeyEnv, 'MCPBRIDGE_UITEST_MANY', 'all share the one saved key');
+
+  const tested = await call('/api/agents/test', { name: 'nvidia-llama-a' });
+  assert.equal(tested.json['succeeded'], true, JSON.stringify(tested.json));
+});
+
+test('a model-derived name that is taken by something else gets a suffix instead of replacing it', () => {
+  const existing = { 'nvidia-gemma': { type: 'openai', baseUrl: 'https://x/v1', model: 'other/gemma' } } as Record<string, AgentConfig>;
+  assert.deepEqual(agentNamesFor('nvidia', ['google/gemma', 'google/gemma-x'], 'https://x/v1', existing, ['claude']),
+    ['nvidia-gemma-2', 'nvidia-gemma-x']);
+  assert.equal(agentNameFor('claude', 'x/claude'), 'claude-claude');
+  assert.equal(agentNamesFor('codex', ['a/b'], 'https://x/v1', {}, ['codex-b'])[0], 'codex-b-2', 'a built-in name is never taken over');
+  assert.ok(agentNameFor('nvidia', 'nvidia/llama-3.3-nemotron-super-49b-v1.5-extra-long').length <= 32);
+  assert.equal(agentNameFor('nvidia', 'meta/llama-3.2-90b-vision-instruct'), 'nvidia-llama-3-2-90b-vision', 'cut at a word');
 });

@@ -203,7 +203,7 @@ export async function startUi(options: UiOptions): Promise<UiServer> {
     };
   };
 
-  const saveAgent = (body: Record<string, unknown>) => {
+  const saveAgent = (body: Record<string, unknown>, { reloadAfter = true } = {}) => {
     const name = String(body['name'] ?? '').trim().toLowerCase();
     if (!NAME_PATTERN.test(name)) throw new Error('a name is lowercase letters, digits, - and _, up to 32 characters');
     const kind = String(body['kind'] ?? '');
@@ -272,8 +272,33 @@ export async function startUi(options: UiOptions): Promise<UiServer> {
     }
     // what was learned about the old configuration may not hold for the new one
     health.forget(name);
-    reload();
+    if (reloadAfter) reload();
     return { saved: name };
+  };
+
+  /**
+   * One agent per model, all sharing the endpoint and key: a provider like NVIDIA offers
+   * dozens of models behind one key, and saving a second one under the same name used to
+   * replace the first. Names come from the model, so they are distinct and readable --
+   * "nvidia-deepseek-v4-1-flash" -- and an existing agent already pointing at the same
+   * model is updated rather than duplicated.
+   */
+  const saveMany = (body: Record<string, unknown>) => {
+    const models = Array.isArray(body['models']) ? [...new Set(body['models'].map(String).map((m) => m.trim()).filter(Boolean))] : [];
+    if (models.length === 0) throw new Error('tick at least one model');
+    if (models.length > 50) throw new Error('at most 50 models at a time');
+    const prefix = String(body['name'] ?? '').trim().toLowerCase();
+    if (!NAME_PATTERN.test(prefix)) throw new Error('the name to start each agent with is lowercase letters, digits, - and _');
+    const baseUrl = String(body['baseUrl'] ?? '').trim().replace(/\/+$/, '');
+    const names = agentNamesFor(prefix, models, baseUrl, fileAgents(), Object.keys(DEFAULT_CONFIG.agents));
+    const saved: string[] = [];
+    models.forEach((model, i) => {
+      saveAgent({ ...body, name: names[i], model, description: `${String(body['description'] ?? '').trim() || prefix}: ${model}` }, { reloadAfter: false });
+      saved.push(names[i]!);
+    });
+    // one reload, so a live relay connection restarts once rather than once per model
+    reload();
+    return { saved };
   };
 
   const removeAgent = (body: Record<string, unknown>) => {
@@ -413,7 +438,8 @@ export async function startUi(options: UiOptions): Promise<UiServer> {
       return;
     }
     const routes: Record<string, (b: Record<string, unknown>) => unknown> = {
-      '/api/agents/save': saveAgent,
+      '/api/agents/save': (b) => saveAgent(b),
+      '/api/agents/save-many': saveMany,
       '/api/agents/remove': removeAgent,
       '/api/agents/test': testAgent,
       '/api/models': listModels,
@@ -458,6 +484,45 @@ export async function startUi(options: UiOptions): Promise<UiServer> {
 }
 
 // ---- helpers ------------------------------------------------------------------------------
+
+/** "deepseek-ai/deepseek-v4.1-flash" under "nvidia" -> "nvidia-deepseek-v4-1-flash", within 32 characters. */
+export function agentNameFor(prefix: string, model: string): string {
+  const slug = (model.split('/').pop() ?? model).toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  const full = `${prefix}-${slug || 'model'}`;
+  if (full.length <= 32) return full;
+  // cut at a word, not inside one: "...-vision", not "...-vision-inst"
+  const cut = full.slice(0, 32);
+  const dash = cut.lastIndexOf('-');
+  return (dash > prefix.length ? cut.slice(0, dash) : cut).replace(/[-_]+$/, '');
+}
+
+/**
+ * A distinct name per model. A name already used by an agent on the same model and endpoint
+ * is reused, so ticking a model twice updates it; one used by anything else -- another
+ * model, a built-in -- gets a numbered suffix instead of being overwritten.
+ */
+export function agentNamesFor(
+  prefix: string, models: string[], baseUrl: string,
+  existing: Record<string, AgentConfig>, builtIn: string[],
+): string[] {
+  const taken = new Set<string>(builtIn);
+  const sameModel = (name: string, model: string) => {
+    const agent = existing[name];
+    return agent?.type === 'openai' && agent.model === model && agent.baseUrl.replace(/\/+$/, '') === baseUrl;
+  };
+  for (const name of Object.keys(existing)) taken.add(name);
+  const chosen: string[] = [];
+  for (const model of models) {
+    const base = agentNameFor(prefix, model);
+    let name = base;
+    for (let n = 2; (taken.has(name) && !sameModel(name, model)) || chosen.includes(name); n += 1) {
+      const suffix = `-${n}`;
+      name = `${base.slice(0, 32 - suffix.length).replace(/[-_]+$/, '')}${suffix}`;
+    }
+    chosen.push(name);
+  }
+  return chosen;
+}
 
 function lastReason(state: ConnectionState): string | undefined {
   return state.state === 'reconnecting' || state.state === 'stopped' ? state.reason : undefined;
