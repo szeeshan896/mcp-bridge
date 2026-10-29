@@ -137,6 +137,17 @@ button.secondary{background:transparent;color:var(--text);border:1px solid var(-
 pre,code{font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}pre{background:#0b0d12;border:1px solid var(--line);border-radius:8px;padding:12px;overflow:auto;white-space:pre-wrap;word-break:break-all}
 .ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}.muted{color:var(--muted)}.err{color:var(--bad);min-height:1.4em;font-size:14px}
 table{width:100%;border-collapse:collapse;font-size:14px}td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--muted);font-weight:500}
+td.detail{overflow-wrap:anywhere;word-break:break-word}.small{font-size:12px}
+/* a Windows path has no spaces to wrap at, so on a phone a three-column table pushed the
+   whole page sideways; there each row becomes a card instead */
+@media(max-width:640px){
+  main{padding:24px 14px}.panel{padding:16px 14px}
+  table.stack,table.stack tbody,table.stack tr,table.stack td{display:block;width:100%}
+  table.stack tr:first-child{display:none}
+  table.stack tr{border-bottom:1px solid var(--line);padding:10px 0}
+  table.stack td{border:0;padding:2px 0}
+  table.stack td[data-label]::before{content:attr(data-label) ": ";color:var(--muted)}
+}
 .token{background:#0b0d12;border:1px dashed var(--accent);border-radius:8px;padding:10px 12px;margin-top:10px;display:none}.qr svg{width:180px;height:180px;background:#fff;padding:6px;border-radius:8px}
 .google{display:inline-block;margin-top:12px;padding:9px 14px;border:1px solid var(--line);border-radius:8px;color:var(--text);text-decoration:none}
 `;
@@ -184,18 +195,43 @@ type Summary = ReturnType<typeof accountSummary>;
 
 function connectedApps(me: Summary): string {
   if (me.connectedApps.length === 0) return `<p class="muted">Nothing has connected through sign-in yet.</p>`;
-  return `<table><tr><th>App</th><th>Connected</th><th>Last used</th><th></th></tr>${me.connectedApps
-    .map((a) => `<tr><td><b>${esc(a.name)}</b></td><td class="muted">${new Date(a.createdAt).toLocaleString()}</td><td class="muted">${a.lastUsedAt ? new Date(a.lastUsedAt).toLocaleString() : 'not yet'}</td><td><button class="danger" style="margin:0;padding:4px 10px" data-revoke="${esc(a.id)}">Disconnect</button></td></tr>`)
+  return `<table class="stack"><tr><th>App</th><th>Connected</th><th>Last used</th><th></th></tr>${me.connectedApps
+    .map((a) => `<tr><td><b>${esc(a.name)}</b></td><td class="muted" data-label="Connected">${new Date(a.createdAt).toLocaleString()}</td><td class="muted" data-label="Last used">${a.lastUsedAt ? new Date(a.lastUsedAt).toLocaleString() : 'not yet'}</td><td><button class="danger" style="margin:0;padding:4px 10px" data-revoke="${esc(a.id)}">Disconnect</button></td></tr>`)
     .join('')}</table>`;
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  'quota-exhausted': 'limit reached',
+  'sign-in-failed': 'sign-in failed',
+  'directory-not-trusted': 'folder not trusted',
+};
+
+/**
+ * One agent, as a table row on a wide screen and a card on a phone (the "stack" table
+ * becomes blocks under 640px). The newer fields -- status, what it may do, its limit --
+ * are shown when the connected machine's mcpbridge reports them; an older one does not.
+ */
+function agentRow(a: Summary['device'] extends infer D ? D extends { agents: (infer A)[] } ? A : never : never): string {
+  const label = a.available ? 'available' : (a.status && STATUS_LABEL[a.status]) || 'unavailable';
+  const may = !a.readsFiles
+    ? 'no file access'
+    : a.writesFiles === undefined
+      ? ''
+      : a.writesFiles || a.runsCommands
+        ? `may ${[a.writesFiles ? 'edit files' : '', a.runsCommands ? 'run commands' : ''].filter(Boolean).join(' & ')}`
+        : 'read-only';
+  const facts = [may, a.timeoutSeconds ? `${a.timeoutSeconds} s limit` : '', a.retryAt ? `try again ${a.retryAt}` : '']
+    .filter(Boolean).map(esc).join(' · ');
+  return `<tr><td><code>${esc(a.name)}</code>${facts ? `<div class="muted small">${facts}</div>` : ''}</td>` +
+    `<td class="${a.available ? 'ok' : 'bad'}">${esc(label)}</td>` +
+    `<td class="muted detail">${esc(a.detail)}</td></tr>`;
 }
 
 function dashboardPage(me: Summary, base: string, googleEnabled: boolean): string {
   const host = base.replace(/\/$/, '');
   const device = me.device.online
     ? `<p><span class="ok">● Online</span> — <b>${esc(me.device.name)}</b> <span class="muted">(agent ${esc(me.device.agentVersion)}, since ${new Date(me.device.connectedAt).toLocaleString()})</span></p>
-       <table><tr><th>Agent</th><th>Status</th><th>Detail</th></tr>${me.device.agents
-         .map((a) => `<tr><td><code>${esc(a.name)}</code>${a.readsFiles ? '' : ' <span class="muted">(no file access)</span>'}</td><td class="${a.available ? 'ok' : 'bad'}">${a.available ? 'available' : 'unavailable'}</td><td class="muted">${esc(a.detail)}</td></tr>`)
-         .join('')}</table>`
+       <table class="stack"><tr><th>Agent</th><th>Status</th><th>Detail</th></tr>${me.device.agents.map(agentRow).join('')}</table>`
     : `<p><span class="bad">● Offline</span> — no machine is connected. On the computer where your AI CLIs are signed in, run the <b>connect</b> command below.</p>`;
 
   const tokenRow = (kind: 'agent' | 'client', title: string, blurb: string) => {
